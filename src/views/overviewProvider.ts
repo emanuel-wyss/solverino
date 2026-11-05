@@ -142,7 +142,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     const updated = relativeTime(item.updatedAt);
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
-      `**${item.kind === "issue" ? "Issue" : "Pull Request"} #${item.number}** ${item.title}`
+      `**${item.kind === "issue" ? "Issue" : "Pull Request"} #${item.number}** ${escapeMarkdown(item.title)}`
     );
     if (item.isDraft) {
       tooltip.appendMarkdown(" *(draft)*");
@@ -155,7 +155,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     }
     const labels = itemLabelText(item);
     if (labels) {
-      tooltip.appendMarkdown(`\n\n${labels}`);
+      tooltip.appendMarkdown(`\n\n${escapeMarkdown(labels)}`);
     }
     const excerpt = bodyExcerpt(item.body);
     if (excerpt) {
