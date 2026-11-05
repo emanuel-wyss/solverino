@@ -93,17 +93,23 @@ export class WorktreeService {
   async remove(
     kind: ItemKind,
     number: number,
-    deleteBranch = true
+    deleteBranch = true,
+    wtPathOverride?: string
   ): Promise<void> {
     await this.queue.serialize(async () => {
-      const wtPath = WorktreeService.worktreePath(
-        this.repoPath,
-        this.parentFolder,
-        kind,
-        number
-      );
+      const wtPath =
+        wtPathOverride ??
+        WorktreeService.worktreePath(
+          this.repoPath,
+          this.parentFolder,
+          kind,
+          number
+        );
       const existing = await this.list();
       if (!existing.some((w) => w.path === wtPath)) {
+        if (wtPathOverride) {
+          throw new Error(`No worktree registered at ${wtPath}.`);
+        }
         return;
       }
       await runOk("git", ["worktree", "remove", "--force", wtPath], {
