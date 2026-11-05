@@ -42,14 +42,14 @@ describe("codespaceNewUrl", () => {
   it("builds the codespace creation URL for a repo and branch", () => {
     assert.strictEqual(
       codespaceNewUrl("owner/repo", "issue-42"),
-      "https://github.com/codespaces/new?repo=owner%2Frepo&ref=issue-42"
+      "https://codespaces.new/owner/repo/tree/issue-42"
     );
   });
 
   it("encodes refs with slashes", () => {
     assert.strictEqual(
       codespaceNewUrl("owner/repo", "feature/branch"),
-      "https://github.com/codespaces/new?repo=owner%2Frepo&ref=feature%2Fbranch"
+      "https://codespaces.new/owner/repo/tree/feature/branch"
     );
   });
 });

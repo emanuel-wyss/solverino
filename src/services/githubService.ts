@@ -43,9 +43,12 @@ export interface PullRequestSections {
 }
 
 export function codespaceNewUrl(repoSlug: string, ref: string): string {
-  return `https://github.com/codespaces/new?repo=${encodeURIComponent(
-    repoSlug
-  )}&ref=${encodeURIComponent(ref)}`;
+  return `https://codespaces.new/${repoSlug}/tree/${ref}`;
+}
+
+export interface PRHead {
+  ref: string;
+  repoSlug: string;
 }
 
 export function classifyPullRequests(
@@ -161,19 +164,34 @@ export class GitHubService {
     return this.defaultBranch;
   }
 
-  async getPRHeadRef(number: number): Promise<string> {
+  async getPRHead(number: number): Promise<PRHead> {
     const out = await this.gh([
       "pr",
       "view",
       String(number),
       "--json",
-      "headRefName",
+      "headRefName,headRepositoryOwner,headRepository",
     ]);
-    const ref = (JSON.parse(out) as { headRefName?: string }).headRefName;
-    if (!ref) {
+    const parsed = JSON.parse(out) as {
+      headRefName?: string;
+      headRepositoryOwner?: { login?: string };
+      headRepository?: { name?: string };
+    };
+    if (!parsed.headRefName) {
       throw new Error(`Could not determine the head branch of PR #${number}.`);
     }
-    return ref;
+    const headSlug =
+      parsed.headRepositoryOwner?.login && parsed.headRepository?.name
+        ? `${parsed.headRepositoryOwner.login}/${parsed.headRepository.name}`
+        : undefined;
+    return {
+      ref: parsed.headRefName,
+      repoSlug: headSlug ?? (await this.getRepoSlug()),
+    };
+  }
+
+  async getPRHeadRef(number: number): Promise<string> {
+    return (await this.getPRHead(number)).ref;
   }
 
   async listPullRequests(): Promise<PullRequestSections> {

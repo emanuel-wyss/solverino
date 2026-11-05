@@ -8,7 +8,7 @@ import {
 import { WorktreeService } from "./services/worktreeService";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { Logger } from "./util";
-import { GitHubItem } from "./types";
+import { GitHubItem, branchName } from "./types";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -23,6 +23,9 @@ export class Controller {
   private static readonly OPEN_AGENT_FLAG_KEY =
     "solverino.openCopilotAgentOnStart";
   private static readonly OPEN_AGENT_FLAG_TTL_MS = 5 * 60 * 1000;
+  private static readonly URI_HANDLER_PATH = "/open-agent";
+  private static readonly URI_HANDLER_BASE =
+    "vscode://emanuel-wyss.solverino/open-agent";
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel("Solverino");
@@ -89,6 +92,11 @@ export class Controller {
     this.tree.setLoading(true);
     void this.refresh();
     this.startPolling();
+    this.context.subscriptions.push(
+      vscode.window.registerUriHandler({
+        handleUri: (uri) => this.handleUri(uri),
+      })
+    );
     void this.maybeOpenAgentChatOnStart();
     this.context.subscriptions.push(
       this.outputChannel,
@@ -238,25 +246,41 @@ export class Controller {
     }
   }
 
-  private async resolveItemBranch(
-    item: GitHubItem
-  ): Promise<string | undefined> {
-    const existing = this.lookupWorktree(item.kind, item.number);
-    if (existing) {
-      return existing.branch;
-    }
-    if (item.kind === "pr") {
-      return this.github.getPRHeadRef(item.number);
-    }
-    return undefined;
-  }
-
   private async openInCodespace(item: GitHubItem): Promise<void> {
     try {
-      const slug = await this.github.getRepoSlug();
-      let branch = await this.resolveItemBranch(item);
+      const baseSlug = await this.github.getRepoSlug();
+      let slug = baseSlug;
+      let branch: string | undefined;
+      if (item.kind === "pr") {
+        const head = await this.github.getPRHead(item.number);
+        slug = head.repoSlug;
+        branch = head.ref;
+      } else {
+        branch = this.lookupWorktree(item.kind, item.number)?.branch;
+      }
+      if (branch && slug === baseSlug) {
+        if (!(await this.worktrees.hasRemoteBranch(branch))) {
+          const choice = await vscode.window.showWarningMessage(
+            `Branch "${branch}" exists only locally. Push it to GitHub before opening a codespace?`,
+            { modal: true },
+            "Push branch",
+            "Use default branch"
+          );
+          if (choice === "Push branch") {
+            await this.worktrees.pushBranch(branch);
+          } else if (choice === "Use default branch") {
+            branch = await this.github.getDefaultBranch();
+          } else {
+            return;
+          }
+        }
+      }
+      let usedFallback = false;
       if (!branch) {
         branch = await this.github.getDefaultBranch();
+        usedFallback = true;
+      }
+      if (usedFallback) {
         void vscode.window.showInformationMessage(
           `Solverino: no worktree exists for this ${item.kind} yet, opening a codespace on the default branch (${branch}).`
         );
@@ -285,28 +309,64 @@ export class Controller {
       }
     }
     try {
-      await vscode.commands.executeCommand("chat.setMode", "agent");
-    } catch {
-      this.logger.warn(
-        "Could not switch the chat to agent mode; select it manually in the chat editor."
+      await vscode.commands.executeCommand(
+        "workbench.action.chat.toggleAgentMode",
+        { modeId: "agent" }
       );
+    } catch {
+      try {
+        await vscode.commands.executeCommand("chat.setMode", "agent");
+      } catch {
+        this.logger.warn(
+          "Could not switch the chat to agent mode; select it manually in the chat editor."
+        );
+      }
     }
   }
 
-  private async maybeOpenAgentChatOnStart(): Promise<void> {
-    const flaggedAt = this.context.globalState.get<number>(
-      Controller.OPEN_AGENT_FLAG_KEY
-    );
-    if (
-      flaggedAt === undefined ||
-      Date.now() - flaggedAt > Controller.OPEN_AGENT_FLAG_TTL_MS
-    ) {
+  private currentWorkspaceFolder(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  private isSameFolder(a: string, b: string): boolean {
+    return path.resolve(a) === path.resolve(b);
+  }
+
+  private async handleUri(uri: vscode.Uri): Promise<void> {
+    if (uri.path !== Controller.URI_HANDLER_PATH) {
+      return;
+    }
+    const target = new URLSearchParams(uri.query).get("path");
+    const currentFolder = this.currentWorkspaceFolder();
+    if (!target || !currentFolder || !this.isSameFolder(target, currentFolder)) {
       return;
     }
     await this.context.globalState.update(
       Controller.OPEN_AGENT_FLAG_KEY,
       undefined
     );
+    await this.openAgentChat();
+  }
+
+  private async maybeOpenAgentChatOnStart(): Promise<void> {
+    const pending = this.context.globalState.get<{
+      path: string;
+      at: number;
+    }>(Controller.OPEN_AGENT_FLAG_KEY);
+    const currentFolder = this.currentWorkspaceFolder();
+    if (!pending || !currentFolder) {
+      return;
+    }
+    if (!this.isSameFolder(pending.path, currentFolder)) {
+      return;
+    }
+    await this.context.globalState.update(
+      Controller.OPEN_AGENT_FLAG_KEY,
+      undefined
+    );
+    if (Date.now() - pending.at > Controller.OPEN_AGENT_FLAG_TTL_MS) {
+      return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 2000));
     await this.openAgentChat();
   }
@@ -317,6 +377,18 @@ export class Controller {
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
+      const expectedBranch =
+        item.kind === "pr" && prHeadBranch
+          ? prHeadBranch
+          : branchName(item.kind, item.number);
+      const currentFolder = this.currentWorkspaceFolder();
+      if (currentFolder) {
+        const branch = await this.worktrees.currentBranch(currentFolder);
+        if (branch === expectedBranch) {
+          await this.openAgentChat();
+          return;
+        }
+      }
       const info = await this.worktrees.ensure(
         item.kind,
         item.number,
@@ -324,19 +396,30 @@ export class Controller {
       );
       this.worktreesByPath.set(info.path, info.branch);
       this.tree.refresh();
-      const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri
-        .fsPath;
       if (
         currentFolder &&
-        path.resolve(currentFolder) === path.resolve(info.path)
+        this.isSameFolder(currentFolder, info.path)
       ) {
         await this.openAgentChat();
         return;
       }
-      await this.context.globalState.update(
-        Controller.OPEN_AGENT_FLAG_KEY,
-        Date.now()
+      await this.context.globalState.update(Controller.OPEN_AGENT_FLAG_KEY, {
+        path: info.path,
+        at: Date.now(),
+      });
+      await vscode.env.openExternal(
+        vscode.Uri.parse(
+          `${Controller.URI_HANDLER_BASE}?path=${encodeURIComponent(info.path)}`
+        )
       );
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const pending = this.context.globalState.get<{
+        path: string;
+        at: number;
+      }>(Controller.OPEN_AGENT_FLAG_KEY);
+      if (!pending || !this.isSameFolder(pending.path, info.path)) {
+        return;
+      }
       this.openFolderWindow(info.path);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
