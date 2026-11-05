@@ -1,8 +1,8 @@
 {
   "name": "solverino",
-  "displayName": "Solverino — Parallel PR Agents",
-  "description": "Parallel AI coding agents for your Issues & PRs — one chat and one git worktree each, with live progress and one-click PR actions.",
-  "version": "0.1.0",
+  "displayName": "Solverino — Issue & PR Worktrees",
+  "description": "One-click git worktrees for your GitHub Issues & Pull Requests — see which ones already have a worktree and clean them up when done.",
+  "version": "0.2.0",
   "publisher": "emanuel-wyss",
   "license": "MIT",
   "engines": {
@@ -11,16 +11,13 @@
   },
   "categories": [
     "Other",
-    "Chat",
     "SCM Providers"
   ],
   "keywords": [
-    "ai",
-    "agents",
     "worktree",
     "github",
     "pull request",
-    "copilot"
+    "issues"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -30,31 +27,10 @@
     "configuration": {
       "title": "Solverino",
       "properties": {
-        "solverino.maxConcurrentAgents": {
-          "type": "number",
-          "default": 4,
-          "minimum": 1,
-          "description": "Maximum number of agent processes running in parallel. Additional chats are queued."
-        },
         "solverino.worktreeParentFolder": {
           "type": "string",
           "default": "",
           "markdownDescription": "Parent folder for worktrees. Empty = sibling of the repository folder (e.g. `../solverino-<repo>-issue-42`)."
-        },
-        "solverino.agentCommand": {
-          "type": "string",
-          "default": "copilot",
-          "markdownDescription": "Agent executable to run per chat (e.g. `copilot`). It is invoked as `<command> -p <prompt>` with `cwd` set to the chat's worktree."
-        },
-        "solverino.agentResumeArgs": {
-          "type": "string",
-          "default": "--continue",
-          "markdownDescription": "Arguments appended to continue a previous agent session on follow-up messages (e.g. `--continue` for Copilot CLI)."
-        },
-        "solverino.envSetupCommand": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Optional shell command run once in a freshly created worktree (e.g. `npm install`). Empty = skipped."
         },
         "solverino.pollIntervalSeconds": {
           "type": "number",
@@ -66,16 +42,6 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Show all open issues in the overview, not only the ones assigned to you."
-        },
-        "solverino.errorIssueAssignee": {
-          "type": "string",
-          "default": "copilot",
-          "markdownDescription": "GitHub username assigned to issues created from agent error logs (default: `copilot`, the GitHub Copilot coding agent)."
-        },
-        "solverino.autoCreateErrorIssue": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Automatically create a GitHub issue from the error log (assigned to `solverino.errorIssueAssignee`) whenever an agent run fails, instead of reporting manually."
         }
       }
     },
@@ -104,15 +70,9 @@
         "category": "Solverino"
       },
       {
-        "command": "solverino.openChat",
-        "title": "Start Chat",
-        "icon": "$(comment-discussion)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.createWorktree",
-        "title": "Create Worktree",
-        "icon": "$(git-branch)",
+        "command": "solverino.openWorktree",
+        "title": "Open Worktree",
+        "icon": "$(folder-opened)",
         "category": "Solverino"
       },
       {
@@ -122,45 +82,9 @@
         "category": "Solverino"
       },
       {
-        "command": "solverino.startAgent",
-        "title": "Start Agent",
-        "icon": "$(play)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.stopAgent",
-        "title": "Stop Agent",
-        "icon": "$(debug-stop)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.commit",
-        "title": "Commit Changes in Worktree",
-        "icon": "$(check)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.pushAndCreatePR",
-        "title": "Push & Create Pull Request",
-        "icon": "$(git-pull-request)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.openWorktreeInNewWindow",
-        "title": "Open Worktree in New Window",
-        "icon": "$(folder-opened)",
-        "category": "Solverino"
-      },
-      {
         "command": "solverino.openOnGitHub",
         "title": "Open on GitHub",
         "icon": "$(globe)",
-        "category": "Solverino"
-      },
-      {
-        "command": "solverino.reportErrorIssue",
-        "title": "Report Error as GitHub Issue",
-        "icon": "$(bug)",
         "category": "Solverino"
       }
     ],
@@ -174,50 +98,30 @@
       ],
       "view/item/context": [
         {
-          "command": "solverino.openChat",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
-          "group": "inline@1"
-        },
-        {
-          "command": "solverino.startAgent",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
-          "group": "inline@2"
-        },
-        {
-          "command": "solverino.createWorktree",
+          "command": "solverino.openWorktree",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
           "group": "worktree"
         },
         {
           "command": "solverino.cleanupWorktree",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
-          "group": "worktree"
-        },
-        {
-          "command": "solverino.openWorktreeInNewWindow",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr):worktree$/",
           "group": "worktree"
         },
         {
           "command": "solverino.openOnGitHub",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
           "group": "github"
-        },
-        {
-          "command": "solverino.reportErrorIssue",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr):error/",
-          "group": "github"
         }
       ],
       "view/item/inline": [
         {
-          "command": "solverino.openChat",
+          "command": "solverino.openWorktree",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
           "group": "inline@1"
         },
         {
-          "command": "solverino.startAgent",
-          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "command": "solverino.cleanupWorktree",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr):worktree$/",
           "group": "inline@2"
         }
       ]
