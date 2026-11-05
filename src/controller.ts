@@ -24,6 +24,7 @@ export class Controller {
   private worktrees: WorktreeService;
   private worktreeParentFolder: string;
   private worktreesByPath = new Map<string, string>();
+  private itemWorktreeAssociations = new Map<string, string>();
   private pollTimer: NodeJS.Timeout | undefined;
   private repoPath: string;
   private static readonly OPEN_AGENT_FLAG_KEY =
@@ -138,27 +139,36 @@ export class Controller {
       .get<T>(key, fallback) as T;
   }
 
-  private lookupWorktreeByBranch(
-    branch: string
-  ): { branch: string; path: string } | undefined {
-    for (const [wtPath, wtBranch] of this.worktreesByPath) {
-      if (wtBranch === branch) {
-        return { branch: wtBranch, path: wtPath };
-      }
-    }
-    return undefined;
-  }
-
   private lookupWorktree(
     kind: GitHubItem["kind"],
     number: number
   ): { branch: string; path: string } | undefined {
-    const expected = this.worktrees.expectedPath(kind, number);
-    const branch = this.worktreesByPath.get(expected);
+    const key = `${kind}:${number}`;
+    const associated =
+      this.itemWorktreeAssociations.get(key) ??
+      this.worktrees.expectedPath(kind, number);
+    const branch = this.worktreesByPath.get(associated);
     if (!branch) {
       return undefined;
     }
-    return { branch, path: expected };
+    return { branch, path: associated };
+  }
+
+  private async findReusableWorktree(
+    branch: string
+  ): Promise<{ branch: string; path: string } | undefined> {
+    const repoName = await this.worktrees.mainRepoName();
+    for (const [wtPath, wtBranch] of this.worktreesByPath) {
+      if (wtBranch !== branch) {
+        continue;
+      }
+      const folder = wtPath.replace(/.*[\\/]/, "");
+      const parsed = parseWorktreeFolderName(folder);
+      if (parsed && owningRepoName(folder) === repoName) {
+        return { branch: wtBranch, path: wtPath };
+      }
+    }
+    return undefined;
   }
 
   private async scanWorktrees(): Promise<void> {
@@ -317,6 +327,11 @@ export class Controller {
         `#${item.number}: ${item.title}`,
         `Closes #${item.number}\n\n${item.body}`
       );
+      const prNumber = /\/pull\/(\d+)/.exec(prUrl)?.[1];
+      if (prNumber) {
+        this.itemWorktreeAssociations.set(`pr:${prNumber}`, info.wt.path);
+        this.tree.refresh();
+      }
       await vscode.env.openExternal(vscode.Uri.parse(prUrl));
       void vscode.window.showInformationMessage(
         `Solverino: draft PR created${info.committed ? " (uncommitted changes were committed)" : ""} — ${prUrl}`
@@ -605,8 +620,15 @@ export class Controller {
           return;
         }
       }
-      const existingByBranch =
-        prHeadBranch && this.lookupWorktreeByBranch(prHeadBranch);
+      const existingByBranch = prHeadBranch
+        ? await this.findReusableWorktree(prHeadBranch)
+        : undefined;
+      if (existingByBranch) {
+        this.itemWorktreeAssociations.set(
+          `${item.kind}:${item.number}`,
+          existingByBranch.path
+        );
+      }
       const info = existingByBranch
         ? { branch: existingByBranch.branch, path: existingByBranch.path }
         : await this.worktrees.ensure(item.kind, item.number, prHeadBranch);
@@ -651,8 +673,13 @@ export class Controller {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
       if (prHeadBranch) {
-        const existing = this.lookupWorktreeByBranch(prHeadBranch);
+        const existing = await this.findReusableWorktree(prHeadBranch);
         if (existing) {
+          this.itemWorktreeAssociations.set(
+            `${item.kind}:${item.number}`,
+            existing.path
+          );
+          this.tree.refresh();
           this.openFolderWindow(existing.path);
           return;
         }
@@ -673,7 +700,10 @@ export class Controller {
   }
 
   private async cleanupWorktree(item: GitHubItem): Promise<void> {
-    const wtPath = this.worktrees.expectedPath(item.kind, item.number);
+    const key = `${item.kind}:${item.number}`;
+    const wtPath =
+      this.itemWorktreeAssociations.get(key) ??
+      this.worktrees.expectedPath(item.kind, item.number);
     const branch = this.worktreesByPath.get(wtPath);
     if (!branch) {
       void vscode.window.showInformationMessage(
@@ -728,8 +758,9 @@ export class Controller {
       return;
     }
     try {
-      await this.worktrees.remove(item.kind, item.number);
+      await this.worktrees.removeEntry(wtPath, branch);
       this.worktreesByPath.delete(wtPath);
+      this.itemWorktreeAssociations.delete(key);
       this.tree.refresh();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
