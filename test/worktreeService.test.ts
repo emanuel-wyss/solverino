@@ -148,12 +148,62 @@ describe("WorktreeService", () => {
     assert.ok(!list.some((w) => w.branch === "issue-42"));
   });
 
+  it("statusFiles lists changed files and flags sensitive ones", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    fs.writeFileSync(path.join(info.path, "src.ts"), "x\n");
+    fs.writeFileSync(path.join(info.path, ".env"), "SECRET=1\n");
+    const status = await svc.statusFiles(info.path);
+    assert.ok(status.files.some((f) => f.endsWith("src.ts")));
+    assert.ok(status.sensitive.some((f) => f.endsWith(".env")));
+  });
+
+  it("unpushedCommitCount counts commits not on any remote", async () => {
+    const base = path.dirname(repo);
+    const remote = path.join(base, "remote.git");
+    fs.mkdirSync(remote);
+    git(["init", "--bare", "-b", "main"], remote);
+    git(["remote", "add", "origin", remote], repo);
+    git(["push", "-u", "origin", "main"], repo);
+
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.unpushedCommitCount(info.path, "issue-42"), 0);
+    fs.writeFileSync(path.join(info.path, "b.txt"), "new\n");
+    git(["add", "-A"], info.path);
+    git(["commit", "-m", "work"], info.path);
+    assert.strictEqual(await svc.unpushedCommitCount(info.path, "issue-42"), 1);
+  });
+
   it("runs env setup command in fresh worktree", async () => {
+    const base = path.dirname(repo);
+    const remote = path.join(base, "remote.git");
+    fs.mkdirSync(remote);
+    git(["init", "--bare", "-b", "main"], remote);
+    git(["remote", "add", "origin", remote], repo);
+    git(["push", "origin", "main"], repo);
+    const headSha = git(["rev-parse", "HEAD"], repo).trim();
+    git(["update-ref", "refs/pull/7/head", headSha], remote);
+
     const svc = makeService("touch envsetup-ran.txt");
     const info = await svc.ensure("pr", 7);
     assert.ok(
       fs.existsSync(path.join(info.path, "envsetup-ran.txt")),
       "env setup should have run in the worktree"
+    );
+  });
+
+  it("refuses to create a PR worktree when the PR head cannot be fetched", async () => {
+    const base = path.dirname(repo);
+    const remote = path.join(base, "remote.git");
+    fs.mkdirSync(remote);
+    git(["init", "--bare", "-b", "main"], remote);
+    git(["remote", "add", "origin", remote], repo);
+
+    const svc = makeService();
+    await assert.rejects(
+      svc.ensure("pr", 7),
+      /refusing to build the worktree from unrelated code/
     );
   });
 });
