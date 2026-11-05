@@ -2,7 +2,9 @@
 
 Solverino release notes. Add every user-facing change to the **Unreleased** section as it lands; when cutting a release, move it under a new version heading and update the `version` field in `package.json` in the same commit.
 
-## Unreleased
+## v0.2.2
+
+*Ships via PRs #5 and #6.*
 
 ### UX & UI (PR #5)
 
