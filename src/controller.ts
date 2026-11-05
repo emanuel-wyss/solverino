@@ -6,9 +6,9 @@ import {
   codespaceNewUrl,
 } from "./services/githubService";
 import { WorktreeService } from "./services/worktreeService";
-import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
+import { OverviewProvider, OverviewNode, WorktreeLookup } from "./views/overviewProvider";
 import { Logger } from "./util";
-import { GitHubItem, branchName } from "./types";
+import { GitHubItem, branchName, itemStatusText } from "./types";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -18,6 +18,8 @@ export class Controller {
   private worktrees: WorktreeService;
   private worktreeParentFolder: string;
   private worktreesByPath = new Map<string, string>();
+  private dirtyFilesByPath = new Map<string, number>();
+  private statusBarItem: vscode.StatusBarItem | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
   private repoPath: string;
   private static readonly OPEN_AGENT_FLAG_KEY =
@@ -135,18 +137,43 @@ export class Controller {
   private lookupWorktree(
     kind: GitHubItem["kind"],
     number: number
-  ): { branch: string; path: string } | undefined {
+  ): WorktreeLookup | undefined {
     const expected = this.worktrees.expectedPath(kind, number);
     const branch = this.worktreesByPath.get(expected);
     if (!branch) {
       return undefined;
     }
-    return { branch, path: expected };
+    return {
+      branch,
+      path: expected,
+      dirtyFiles: this.dirtyFilesByPath.get(expected),
+    };
   }
 
   private async scanWorktrees(): Promise<void> {
     const list = await this.worktrees.list();
     this.worktreesByPath = new Map(list.map((w) => [w.path, w.branch]));
+    const overviewPaths = new Set(
+      this.tree
+        .allItems()
+        .map((item) => this.worktrees.expectedPath(item.kind, item.number))
+    );
+    const dirtyFilesByPath = new Map<string, number>();
+    await Promise.all(
+      list
+        .filter((w) => overviewPaths.has(w.path))
+        .map(async (w) => {
+          try {
+            dirtyFilesByPath.set(
+              w.path,
+              await this.worktrees.dirtyFileCount(w.path)
+            );
+          } catch {
+            dirtyFilesByPath.set(w.path, 0);
+          }
+        })
+    );
+    this.dirtyFilesByPath = dirtyFilesByPath;
     this.tree.refresh();
   }
 
@@ -180,7 +207,32 @@ export class Controller {
     } finally {
       this.tree.setLoading(false);
       this.tree.refresh();
+      this.updateStatusBar();
     }
+  }
+
+  private updateStatusBar(): void {
+    if (!this.statusBarItem) {
+      this.statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Left,
+        100
+      );
+      this.statusBarItem.name = "Solverino";
+      this.statusBarItem.command = "solverino.goto";
+      this.context.subscriptions.push(this.statusBarItem);
+    }
+    const { prs, issues, reviewPrs } = this.tree.counts();
+    const total = prs + issues + reviewPrs;
+    if (total === 0) {
+      this.statusBarItem.text = "$(git-pull-request) Solverino";
+      this.statusBarItem.tooltip = "Solverino: no open issues or PRs";
+    } else {
+      this.statusBarItem.text = `$(git-pull-request) ${prs}  $(comment-discussion) ${reviewPrs}  $(issues) ${issues}`;
+      this.statusBarItem.tooltip = new vscode.MarkdownString(
+        `Solverino: ${prs} PR(s), ${reviewPrs} review request(s), ${issues} issue(s) — click to jump to one`
+      );
+    }
+    this.statusBarItem.show();
   }
 
   private registerCommands(): void {
@@ -191,6 +243,18 @@ export class Controller {
       );
 
     reg("solverino.refresh", () => this.refresh());
+    reg("solverino.goto", () => this.gotoItem());
+    reg("solverino.showAllOpenIssues", async () => {
+      const config = vscode.workspace.getConfiguration("solverino");
+      const current = this.config<boolean>("showAllOpenIssues", false);
+      const inspect = config.inspect<boolean>("showAllOpenIssues");
+      const target =
+        inspect?.workspaceValue !== undefined
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+      await config.update("showAllOpenIssues", !current, target);
+      await this.refresh();
+    });
     reg("solverino.openWorktree", (arg) => {
       const item = this.requireItem(arg);
       if (item) {
@@ -428,20 +492,97 @@ export class Controller {
     }
   }
 
+  private async gotoItem(): Promise<void> {
+    const items = this.tree.allItems();
+    if (items.length === 0) {
+      void vscode.window.showInformationMessage(
+        "Solverino: no open issues or PRs to jump to. Run Solverino: Refresh Issues & PRs to load them."
+      );
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      items.map((item) => ({
+        label: `#${item.number} ${item.title}`,
+        description: item.kind === "pr" ? "Pull Request" : "Issue",
+        detail: itemStatusText(item) || undefined,
+        item,
+      })),
+      { placeHolder: "Jump to an issue or PR…", matchOnDescription: true }
+    );
+    if (!picked) {
+      return;
+    }
+    const item = picked.item;
+    const hasWorktree = !!this.lookupWorktree(item.kind, item.number);
+    const action = await vscode.window.showQuickPick(
+      [
+        {
+          label: "$(folder-opened) Open Worktree",
+          action: "worktree",
+          alwaysAvailable: true,
+        },
+        {
+          label: "$(globe) Open on GitHub",
+          action: "github",
+          alwaysAvailable: true,
+        },
+        {
+          label: "$(cloud) Open in Codespace",
+          action: "codespace",
+          alwaysAvailable: true,
+        },
+        {
+          label: "$(sparkle) Open Copilot Agent",
+          action: "agent",
+          alwaysAvailable: true,
+        },
+        {
+          label: "$(trash) Cleanup Worktree",
+          action: "cleanup",
+          alwaysAvailable: hasWorktree,
+        },
+      ].filter((a) => a.alwaysAvailable),
+      { placeHolder: `What do you want to do with ${item.kind} #${item.number}?` }
+    );
+    if (!action) {
+      return;
+    }
+    switch (action.action) {
+      case "worktree":
+        await this.openWorktree(item);
+        break;
+      case "github":
+        await vscode.env.openExternal(vscode.Uri.parse(item.url));
+        break;
+      case "codespace":
+        await this.openInCodespace(item);
+        break;
+      case "agent":
+        await this.openCopilotAgent(item);
+        break;
+      case "cleanup":
+        await this.cleanupWorktree(item);
+        break;
+    }
+  }
+
   async openWorktree(item: GitHubItem): Promise<void> {
     try {
       let prHeadBranch: string | undefined;
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
-      const info = await this.worktrees.ensure(
-        item.kind,
-        item.number,
-        prHeadBranch
+      const info = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Solverino: preparing worktree for ${item.kind} #${item.number}…`,
+          cancellable: false,
+        },
+        () => this.worktrees.ensure(item.kind, item.number, prHeadBranch)
       );
       this.worktreesByPath.set(info.path, info.branch);
-      this.tree.refresh();
       this.openFolderWindow(info.path);
+      void this.scanWorktrees();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);

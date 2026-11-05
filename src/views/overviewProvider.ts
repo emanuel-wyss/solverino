@@ -1,5 +1,19 @@
 import * as vscode from "vscode";
-import { GitHubItem, ItemKind } from "../types";
+import {
+  GitHubItem,
+  ItemKind,
+  bodyExcerpt,
+  escapeMarkdown,
+  itemLabelText,
+  itemStatusText,
+  relativeTime,
+} from "../types";
+
+export interface WorktreeLookup {
+  branch: string;
+  path: string;
+  dirtyFiles?: number;
+}
 
 export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<
@@ -16,7 +30,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     private readonly getWorktree: (
       kind: ItemKind,
       number: number
-    ) => { branch: string; path: string } | undefined
+    ) => WorktreeLookup | undefined
   ) {}
 
   refresh(): void {
@@ -38,6 +52,18 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     this.reviewPrs = reviewPrs;
   }
 
+  allItems(): GitHubItem[] {
+    return [...this.prs, ...this.reviewPrs, ...this.issues];
+  }
+
+  counts(): { prs: number; reviewPrs: number; issues: number } {
+    return {
+      prs: this.prs.length,
+      reviewPrs: this.reviewPrs.length,
+      issues: this.issues.length,
+    };
+  }
+
   getTreeItem(element: OverviewNode): vscode.TreeItem {
     return element;
   }
@@ -49,6 +75,8 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
         nodes.push(
           new OverviewNode("My Pull Requests", "section-prs", {
             expand: vscode.TreeItemCollapsibleState.Expanded,
+            icon: "git-pull-request",
+            description: String(this.prs.length),
           })
         );
       }
@@ -56,6 +84,8 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
         nodes.push(
           new OverviewNode("Review Requested", "section-review-prs", {
             expand: vscode.TreeItemCollapsibleState.Collapsed,
+            icon: "comment-discussion",
+            description: String(this.reviewPrs.length),
           })
         );
       }
@@ -63,16 +93,16 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
         nodes.push(
           new OverviewNode("Assigned Issues", "section-issues", {
             expand: vscode.TreeItemCollapsibleState.Expanded,
+            icon: "issues",
+            description: String(this.issues.length),
           })
         );
       }
-      if (nodes.length === 0) {
+      if (nodes.length === 0 && this.loading) {
         return [
-          new OverviewNode(
-            this.loading ? "Loading…" : "No open issues or PRs found",
-            "empty",
-            {}
-          ),
+          new OverviewNode("Loading…", "loading", {
+            icon: "loading~spin",
+          }),
         ];
       }
       return nodes;
@@ -91,14 +121,60 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
 
   private itemNode(item: GitHubItem): OverviewNode {
     const worktree = this.getWorktree(item.kind, item.number);
-    const label = `#${item.number} ${item.title}`;
-    const node = new OverviewNode(label, `${item.kind}:${item.number}`, {
-      description: worktree ? `worktree · ${worktree.branch}` : item.author,
-      tooltip: `${item.kind === "issue" ? "Issue" : "Pull Request"} #${
-        item.number
-      }\n${item.title}\nby ${item.author}${
-        worktree ? `\n\nWorktree: ${worktree.path}` : ""
-      }\n\n${item.url}`,
+    const status = itemStatusText(item);
+    const descriptionParts: string[] = [];
+    if (status) {
+      descriptionParts.push(status);
+    }
+    if (worktree) {
+      const dirty =
+        worktree.dirtyFiles && worktree.dirtyFiles > 0
+          ? ` \u00b7 ${worktree.dirtyFiles} changed`
+          : "";
+      descriptionParts.push(`${worktree.branch}${dirty}`);
+    } else {
+      const labels = itemLabelText(item);
+      if (labels) {
+        descriptionParts.push(labels);
+      }
+      descriptionParts.push(item.author);
+    }
+    const updated = relativeTime(item.updatedAt);
+    const tooltip = new vscode.MarkdownString();
+    tooltip.appendMarkdown(
+      `**${item.kind === "issue" ? "Issue" : "Pull Request"} #${item.number}** ${escapeMarkdown(item.title)}`
+    );
+    if (item.isDraft) {
+      tooltip.appendMarkdown(" *(draft)*");
+    }
+    tooltip.appendMarkdown(
+      `\n\nby @${item.author} \u00b7 updated ${updated || "recently"}`
+    );
+    if (status) {
+      tooltip.appendMarkdown(` \u00b7 ${status}`);
+    }
+    const labels = itemLabelText(item);
+    if (labels) {
+      tooltip.appendMarkdown(`\n\n${escapeMarkdown(labels)}`);
+    }
+    const excerpt = bodyExcerpt(item.body);
+    if (excerpt) {
+      tooltip.appendMarkdown(`\n\n${escapeMarkdown(excerpt)}`);
+    }
+    if (worktree) {
+      tooltip.appendMarkdown(
+        `\n\nWorktree: \`${worktree.path}\`` +
+          (worktree.dirtyFiles && worktree.dirtyFiles > 0
+            ? ` (${worktree.dirtyFiles} uncommitted file(s))`
+            : "")
+      );
+    }
+    tooltip.appendMarkdown(
+      `\n\n[${item.url}](${item.url})`
+    );
+    const node = new OverviewNode(`#${item.number} ${item.title}`, `${item.kind}:${item.number}`, {
+      description: descriptionParts.join(" \u00b7 "),
+      tooltip,
       context: `${item.kind}${worktree ? ":worktree" : ""}`,
       command: {
         command: "solverino.openWorktree",
@@ -108,8 +184,23 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     });
     node.item = item;
     node.iconPath = new vscode.ThemeIcon(
-      worktree ? "folder-library" : item.kind === "issue" ? "issues" : "git-pull-request"
+      worktree
+        ? "folder-library"
+        : item.kind === "issue"
+          ? "issues"
+          : "git-pull-request"
     );
+    if (item.kind === "pr" && item.checkState === "failure") {
+      node.iconPath = new vscode.ThemeIcon(
+        "close",
+        new vscode.ThemeColor("testing.iconFailed")
+      );
+    } else if (item.kind === "pr" && item.checkState === "pending") {
+      node.iconPath = new vscode.ThemeIcon(
+        "sync~spin",
+        new vscode.ThemeColor("testing.iconQueued")
+      );
+    }
     return node;
   }
 }
@@ -126,6 +217,7 @@ export class OverviewNode extends vscode.TreeItem {
       tooltip?: string | vscode.MarkdownString;
       context?: string;
       command?: vscode.Command;
+      icon?: string;
     }
   ) {
     super(label, options.expand ?? vscode.TreeItemCollapsibleState.None);
@@ -141,6 +233,9 @@ export class OverviewNode extends vscode.TreeItem {
     }
     if (options.command) {
       this.command = options.command;
+    }
+    if (options.icon) {
+      this.iconPath = new vscode.ThemeIcon(options.icon);
     }
   }
 }
