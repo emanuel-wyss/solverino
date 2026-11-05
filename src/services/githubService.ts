@@ -1,5 +1,5 @@
 import { runOk, Logger, RunError } from "../util";
-import { GitHubItem, ItemKind } from "../types";
+import { ChatSession, GitHubItem, ItemKind } from "../types";
 
 const ISSUE_FIELDS = "number,title,body,url,state,author,updatedAt";
 const PR_FIELDS = "number,title,body,url,state,author,updatedAt";
@@ -129,6 +129,20 @@ export class GitHubService {
     }
   }
 
+  async createIssue(
+    title: string,
+    body: string,
+    assignee?: string
+  ): Promise<{ url: string }> {
+    const args = ["issue", "create", "--title", title, "--body", body];
+    if (assignee) {
+      args.push("--assignee", assignee);
+    }
+    const out = await this.gh(args);
+    const url = out.trim().split("\n").pop() ?? "";
+    return { url };
+  }
+
   async comment(item: GitHubItem, body: string): Promise<void> {
     if (item.kind === "issue") {
       await this.gh(["issue", "comment", String(item.number), "--body", body]);
@@ -136,6 +150,40 @@ export class GitHubService {
       await this.gh(["pr", "comment", String(item.number), "--body", body]);
     }
   }
+}
+
+export function buildErrorIssueTitle(session: ChatSession): string {
+  const kind = session.kind === "issue" ? "Issue" : "PR";
+  const message = (session.errorMessage ?? "Agent error").replace(/\s+/g, " ").trim();
+  const truncated =
+    message.length > 80 ? `${message.slice(0, 77).trimEnd()}…` : message;
+  return `Solverino: ${kind} #${session.number} agent error — ${truncated}`;
+}
+
+export function buildErrorIssueBody(session: ChatSession): string {
+  const kind = session.kind === "issue" ? "Issue" : "Pull Request";
+  const lastAgent = [...session.history]
+    .reverse()
+    .find((m) => m.role === "agent");
+  const log = lastAgent ? lastAgent.text.trim().slice(-4000) : "";
+  return [
+    `The Solverino agent run for ${kind} #${session.number} (${session.title}) failed.`,
+    "",
+    "## Error",
+    "```",
+    session.errorMessage ?? "Agent exited with an unknown error.",
+    "```",
+    "",
+    "## Context",
+    `- ${kind}: #${session.number}`,
+    session.branch ? `- Branch: \`${session.branch}\`` : "- Branch: none",
+    session.worktreePath ? `- Worktree: \`${session.worktreePath}\`` : "- Worktree: none",
+    "",
+    log ? "## Agent output (tail)" : "## Agent output",
+    "```",
+    log || "(no agent output captured)",
+    "```",
+  ].join("\n");
 }
 
 export function isAuthOrMissingCliError(e: unknown): string | undefined {

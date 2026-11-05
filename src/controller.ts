@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 import { AgentRunner, buildAgentArgs, buildDefaultPrompt } from "./services/agentRunner";
-import { GitHubService, isAuthOrMissingCliError } from "./services/githubService";
+import {
+  GitHubService,
+  buildErrorIssueBody,
+  buildErrorIssueTitle,
+  isAuthOrMissingCliError,
+} from "./services/githubService";
 import { WorktreeService } from "./services/worktreeService";
 import { SessionStore } from "./state";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
@@ -239,6 +244,12 @@ export class Controller {
       const item = this.requireItem(arg);
       if (item) {
         this.openWorktreeInNewWindow(sessionId(item.kind, item.number));
+      }
+    });
+    reg("solverino.reportErrorIssue", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.reportErrorIssue(sessionId(item.kind, item.number));
       }
     });
     reg("solverino.openOnGitHub", (arg) => {
@@ -679,6 +690,9 @@ export class Controller {
       case "openWorktree":
         this.openWorktreeInNewWindow(id);
         break;
+      case "reportError":
+        await this.reportErrorIssue(id);
+        break;
     }
   }
 
@@ -733,6 +747,7 @@ export class Controller {
         text: `Agent exited with code ${code ?? "unknown"}. Check the Solverino output channel for details.`,
         timestamp: Date.now(),
       });
+      this.maybeAutoCreateErrorIssue(id);
     }
     const updated = this.store.get(id)!;
     this.refreshPanel(updated);
@@ -770,5 +785,64 @@ export class Controller {
     }
     this.tree.refresh();
     void vscode.window.showErrorMessage(`Solverino: ${message}`);
+    this.maybeAutoCreateErrorIssue(id);
+  }
+
+  private maybeAutoCreateErrorIssue(id: string): void {
+    if (this.config<boolean>("autoCreateErrorIssue", false)) {
+      void this.reportErrorIssue(id, { auto: true });
+    }
+  }
+
+  private async reportErrorIssue(
+    id: string,
+    options: { auto?: boolean } = {}
+  ): Promise<void> {
+    const session = this.store.get(id);
+    if (!session) {
+      return;
+    }
+    if (session.status !== "error" && !session.errorMessage) {
+      if (!options.auto) {
+        void vscode.window.showInformationMessage(
+          "Solverino: no error recorded for this chat."
+        );
+      }
+      return;
+    }
+    const assignee = this.config<string>("errorIssueAssignee", "copilot");
+    if (!options.auto) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Create a GitHub issue with the error log for ${session.kind} #${session.number} and assign it to @${assignee}?`,
+        { modal: true },
+        "Create Issue"
+      );
+      if (confirm !== "Create Issue") {
+        return;
+      }
+    }
+    try {
+      const issue = await this.github.createIssue(
+        buildErrorIssueTitle(session),
+        buildErrorIssueBody(session),
+        assignee
+      );
+      this.store.appendMessage(id, {
+        role: "system",
+        text: `Error reported as issue (assigned to @${assignee}): ${issue.url}`,
+        timestamp: Date.now(),
+      });
+      const updated = this.store.get(id);
+      if (updated) {
+        this.refreshPanel(updated);
+      }
+      void vscode.env.openExternal(vscode.Uri.parse(issue.url));
+    } catch (e) {
+      const msg = isAuthOrMissingCliError(e) ?? String(e);
+      this.logger.error(msg);
+      void vscode.window.showErrorMessage(
+        `Solverino: failed to create the error issue. ${msg}`
+      );
+    }
   }
 }
