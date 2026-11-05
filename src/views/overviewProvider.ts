@@ -76,6 +76,13 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
           })
         );
       }
+      if (this.orphans.length > 0) {
+        nodes.push(
+          new OverviewNode("Orphaned Worktrees", "section-orphans", {
+            expand: vscode.TreeItemCollapsibleState.Collapsed,
+          })
+        );
+      }
       if (nodes.length === 0) {
         return [
           new OverviewNode(

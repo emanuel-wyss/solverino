@@ -213,44 +213,102 @@ export class GitHubService {
     return url.trim();
   }
 
+  async getItemState(kind: ItemKind, number: number): Promise<string | undefined> {
+    try {
+      const out = await this.gh([
+        kind === "pr" ? "pr" : "issue",
+        "view",
+        String(number),
+        "--json",
+        "state",
+      ]);
+      const state = (JSON.parse(out) as { state?: string }).state;
+      return state?.toUpperCase();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async ghGraphql(query: string): Promise<unknown> {
+    const out = await this.gh(["api", "graphql", "-f", `query=${query}`]);
+    return JSON.parse(out) as unknown;
+  }
+
   async listRecentlyMergedPRs(days = 7): Promise<ActivityItem[]> {
     const slug = await this.getRepoSlug();
-    const raw = JSON.parse(
-      await this.gh([
-        "search",
-        "prs",
-        `merged:>=${isoDateDaysAgo(days)}`,
-        "--repo",
-        slug,
-        "--author",
-        "@me",
-        "--limit",
-        "30",
-        "--json",
-        "number,title,url,closedAt",
-      ])
-    ) as { number: number; title: string; url: string; closedAt: string }[];
-    return raw.map((i) => ({ kind: "pr", ...i }));
+    const user = await this.getCurrentUser();
+    if (!user) {
+      return [];
+    }
+    const query =
+      `search(query: "repo:${slug} is:pr merged:>=${isoDateDaysAgo(days)}", type: ISSUE, first: 50) ` +
+      `{ nodes { ... on PullRequest { number title url closedAt mergedBy { login } } } }`;
+    const parsed = (await this.ghGraphql(query)) as {
+      data?: {
+        search?: {
+          nodes?:
+            | {
+                number: number;
+                title: string;
+                url: string;
+                closedAt: string;
+                mergedBy?: { login?: string } | null;
+              }[]
+            | null;
+        };
+      };
+    };
+    const nodes = parsed.data?.search?.nodes ?? [];
+    return nodes
+      .filter((n) => isMergedBy(n.mergedBy?.login, user))
+      .map((n) => ({
+        kind: "pr" as const,
+        number: n.number,
+        title: n.title,
+        url: n.url,
+        closedAt: n.closedAt,
+      }));
   }
 
   async listRecentlyClosedIssues(days = 7): Promise<ActivityItem[]> {
     const slug = await this.getRepoSlug();
-    const raw = JSON.parse(
-      await this.gh([
-        "search",
-        "issues",
-        `closed:>=${isoDateDaysAgo(days)}`,
-        "--repo",
-        slug,
-        "--assignee",
-        "@me",
-        "--limit",
-        "30",
-        "--json",
-        "number,title,url,closedAt",
-      ])
-    ) as { number: number; title: string; url: string; closedAt: string }[];
-    return raw.map((i) => ({ kind: "issue", ...i }));
+    const user = await this.getCurrentUser();
+    if (!user) {
+      return [];
+    }
+    const query =
+      `search(query: "repo:${slug} is:issue closed:>=${isoDateDaysAgo(days)}", type: ISSUE, first: 50) ` +
+      `{ nodes { ... on Issue { number title url closedAt ` +
+      `timelineItems(itemTypes: CLOSED_EVENT, first: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } }`;
+    const parsed = (await this.ghGraphql(query)) as {
+      data?: {
+        search?: {
+          nodes?:
+            | {
+                number: number;
+                title: string;
+                url: string;
+                closedAt: string;
+                timelineItems?: {
+                  nodes?: { actor?: { login?: string } | null }[] | null;
+                } | null;
+              }[]
+            | null;
+        };
+      };
+    };
+    const nodes = parsed.data?.search?.nodes ?? [];
+    return nodes
+      .filter((n) =>
+        isClosedBy(n.timelineItems?.nodes?.[0]?.actor?.login, user)
+      )
+      .map((n) => ({
+        kind: "issue" as const,
+        number: n.number,
+        title: n.title,
+        url: n.url,
+        closedAt: n.closedAt,
+      }));
   }
 
   async listPullRequests(): Promise<PullRequestSections> {
@@ -282,6 +340,20 @@ export interface ActivityItem {
 export function isoDateDaysAgo(days: number, now = new Date()): string {
   const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   return d.toISOString().slice(0, 10);
+}
+
+export function isMergedBy(
+  mergedBy: string | undefined,
+  currentUser: string | undefined
+): boolean {
+  return !!currentUser && mergedBy === currentUser;
+}
+
+export function isClosedBy(
+  closedBy: string | undefined,
+  currentUser: string | undefined
+): boolean {
+  return !!currentUser && closedBy === currentUser;
 }
 
 export function isAuthOrMissingCliError(e: unknown): string | undefined {

@@ -173,7 +173,7 @@ export class Controller {
       ]);
       this.tree.setItems(issues, prs.mine, prs.reviewRequested);
       await this.scanWorktrees();
-      this.updateOrphans(issues, prs.mine, prs.reviewRequested);
+      await this.updateOrphans(issues, prs.mine, prs.reviewRequested);
     } catch (e) {
       const msg = isAuthOrMissingCliError(e) ?? String(e);
       this.logger.error(msg);
@@ -185,11 +185,11 @@ export class Controller {
     }
   }
 
-  private updateOrphans(
+  private async updateOrphans(
     issues: GitHubItem[],
     prs: GitHubItem[],
     reviewPrs: GitHubItem[]
-  ): void {
+  ): Promise<void> {
     const repoName = this.repoName();
     const openKeys = new Set<string>();
     for (const item of [...issues, ...prs, ...reviewPrs]) {
@@ -199,14 +199,21 @@ export class Controller {
     for (const [wtPath] of this.worktreesByPath) {
       const folder = wtPath.replace(/.*[\\/]/, "");
       const parsed = parseWorktreeFolderName(folder);
-      if (parsed && parsed.repoName === repoName) {
-        if (!openKeys.has(`${parsed.kind}:${parsed.number}`)) {
-          const branch = this.worktreesByPath.get(wtPath);
-          if (branch) {
-            orphans.push({ branch, path: wtPath });
-          }
-        }
+      if (!parsed || parsed.repoName !== repoName) {
+        continue;
       }
+      const branch = this.worktreesByPath.get(wtPath);
+      if (!branch) {
+        continue;
+      }
+      if (openKeys.has(`${parsed.kind}:${parsed.number}`)) {
+        continue;
+      }
+      const state = await this.github.getItemState(parsed.kind, parsed.number);
+      if (state === "OPEN") {
+        continue;
+      }
+      orphans.push({ branch, path: wtPath });
     }
     this.tree.setOrphans(orphans);
   }
@@ -262,6 +269,14 @@ export class Controller {
         return;
       }
       const branch = branchName(item.kind, item.number);
+      const currentFolder = this.currentWorkspaceFolder();
+      let existingPath: string | undefined;
+      if (currentFolder) {
+        const currentBranch = await this.worktrees.currentBranch(currentFolder);
+        if (currentBranch === branch) {
+          existingPath = currentFolder;
+        }
+      }
       const info = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -269,7 +284,14 @@ export class Controller {
           cancellable: false,
         },
         async () => {
-          const wt = await this.worktrees.ensure(item.kind, item.number);
+          const wt = existingPath
+            ? {
+                path: existingPath,
+                branch,
+                created: false,
+                branchCreated: false,
+              }
+            : await this.worktrees.ensure(item.kind, item.number);
           const committed = await this.worktrees.commitAll(
             wt.path,
             `#${item.number}: ${item.title}`
@@ -308,6 +330,15 @@ export class Controller {
       if (status.files.length > 0) {
         warnings.push(
           `${status.files.length} uncommitted file(s) will be permanently lost`
+        );
+      }
+      const unpushed = await this.worktrees.unpushedCommitCount(
+        orphan.path,
+        orphan.branch
+      );
+      if (unpushed > 0) {
+        warnings.push(
+          `${unpushed} commit(s) on ${orphan.branch} exist only locally and will be deleted`
         );
       }
     } catch {
