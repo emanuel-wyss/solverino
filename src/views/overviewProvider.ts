@@ -1,13 +1,5 @@
 import * as vscode from "vscode";
-import { GitHubItem, ItemKind, SessionStatus } from "../types";
-
-const STATUS_LABEL: Record<SessionStatus, string> = {
-  idle: "",
-  working: "working",
-  needsReview: "needs review",
-  prOpened: "PR opened",
-  error: "error",
-};
+import { GitHubItem, ItemKind } from "../types";
 
 export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<
@@ -21,10 +13,10 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   private loading = false;
 
   constructor(
-    private readonly getStatus: (
+    private readonly getWorktree: (
       kind: ItemKind,
       number: number
-    ) => SessionStatus | undefined
+    ) => { branch: string; path: string } | undefined
   ) {}
 
   refresh(): void {
@@ -98,33 +90,25 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   }
 
   private itemNode(item: GitHubItem): OverviewNode {
-    const status = this.getStatus(item.kind, item.number) ?? "idle";
+    const worktree = this.getWorktree(item.kind, item.number);
     const label = `#${item.number} ${item.title}`;
     const node = new OverviewNode(label, `${item.kind}:${item.number}`, {
-      description: STATUS_LABEL[status] || item.author,
+      description: worktree ? `worktree · ${worktree.branch}` : item.author,
       tooltip: `${item.kind === "issue" ? "Issue" : "Pull Request"} #${
         item.number
-      }\n${item.title}\nby ${item.author}\n\n${item.url}`,
-      context: `${item.kind}:${status}`,
+      }\n${item.title}\nby ${item.author}${
+        worktree ? `\n\nWorktree: ${worktree.path}` : ""
+      }\n\n${item.url}`,
+      context: `${item.kind}${worktree ? ":worktree" : ""}`,
       command: {
-        command: "solverino.openChat",
-        title: "Start Chat",
+        command: "solverino.openWorktree",
+        title: "Open Worktree",
         arguments: [item],
       },
     });
     node.item = item;
     node.iconPath = new vscode.ThemeIcon(
-      status === "working"
-        ? "loading~spin"
-        : status === "needsReview"
-        ? "eye"
-        : status === "prOpened"
-        ? "git-pull-request"
-        : status === "error"
-        ? "error"
-        : item.kind === "issue"
-        ? "issues"
-        : "git-pull-request"
+      worktree ? "folder-library" : item.kind === "issue" ? "issues" : "git-pull-request"
     );
     return node;
   }

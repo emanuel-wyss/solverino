@@ -4,15 +4,10 @@ import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { WorktreeService } from "../src/services/worktreeService";
-import { branchName, sessionId, worktreeFolderName } from "../src/types";
+import { branchName, worktreeFolderName } from "../src/types";
 import { PromiseQueue, runOk } from "../src/util";
 
 describe("naming", () => {
-  it("sessionId builds issue/pr ids", () => {
-    assert.strictEqual(sessionId("issue", 42), "issue-42");
-    assert.strictEqual(sessionId("pr", 7), "pr-7");
-  });
-
   it("branchName builds issue/pr branches", () => {
     assert.strictEqual(branchName("issue", 42), "issue-42");
     assert.strictEqual(branchName("pr", 7), "pr-7");
@@ -84,8 +79,8 @@ describe("WorktreeService", () => {
     fs.rmSync(path.dirname(repo), { recursive: true, force: true });
   });
 
-  function makeService(envSetup = ""): WorktreeService {
-    return new WorktreeService(repo, worktreeParent, envSetup, {
+  function makeService(): WorktreeService {
+    return new WorktreeService(repo, worktreeParent, {
       debug: () => {},
       info: () => {},
       warn: () => {},
@@ -120,25 +115,6 @@ describe("WorktreeService", () => {
     assert.ok(list.some((w) => w.branch === "issue-42"));
   });
 
-  it("detects uncommitted changes and commits them", async () => {
-    const svc = makeService();
-    const info = await svc.ensure("issue", 42);
-    assert.strictEqual(await svc.hasUncommittedChanges(info.path), false);
-    fs.writeFileSync(path.join(info.path, "b.txt"), "new\n");
-    assert.strictEqual(await svc.hasUncommittedChanges(info.path), true);
-    const result = await svc.commitAll(info.path, "add b");
-    assert.strictEqual(result.committed, true);
-    assert.ok(result.summary.includes("add b"));
-    assert.strictEqual(await svc.hasUncommittedChanges(info.path), false);
-  });
-
-  it("commitAll reports nothing to commit when clean", async () => {
-    const svc = makeService();
-    const info = await svc.ensure("issue", 42);
-    const result = await svc.commitAll(info.path, "noop");
-    assert.strictEqual(result.committed, false);
-  });
-
   it("removes worktree and branch", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);
@@ -148,14 +124,12 @@ describe("WorktreeService", () => {
     assert.ok(!list.some((w) => w.branch === "issue-42"));
   });
 
-  it("statusFiles lists changed files and flags sensitive ones", async () => {
+  it("statusFiles lists changed files", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);
     fs.writeFileSync(path.join(info.path, "src.ts"), "x\n");
-    fs.writeFileSync(path.join(info.path, ".env"), "SECRET=1\n");
     const status = await svc.statusFiles(info.path);
     assert.ok(status.files.some((f) => f.endsWith("src.ts")));
-    assert.ok(status.sensitive.some((f) => f.endsWith(".env")));
   });
 
   it("unpushedCommitCount counts commits not on any remote", async () => {
@@ -175,22 +149,29 @@ describe("WorktreeService", () => {
     assert.strictEqual(await svc.unpushedCommitCount(info.path, "issue-42"), 1);
   });
 
-  it("runs env setup command in fresh worktree", async () => {
+  it("checks out the actual PR head branch when given", async () => {
     const base = path.dirname(repo);
     const remote = path.join(base, "remote.git");
     fs.mkdirSync(remote);
     git(["init", "--bare", "-b", "main"], remote);
     git(["remote", "add", "origin", remote], repo);
-    git(["push", "origin", "main"], repo);
+    git(["push", "-u", "origin", "main"], repo);
+
+    git(["checkout", "-b", "feature-branch"], repo);
+    fs.writeFileSync(path.join(repo, "pr-change.txt"), "change\n");
+    git(["add", "-A"], repo);
+    git(["commit", "-m", "pr work"], repo);
+    git(["push", "origin", "feature-branch"], repo);
     const headSha = git(["rev-parse", "HEAD"], repo).trim();
     git(["update-ref", "refs/pull/7/head", headSha], remote);
+    git(["checkout", "main"], repo);
 
-    const svc = makeService("touch envsetup-ran.txt");
-    const info = await svc.ensure("pr", 7);
-    assert.ok(
-      fs.existsSync(path.join(info.path, "envsetup-ran.txt")),
-      "env setup should have run in the worktree"
-    );
+    const svc = makeService();
+    const info = await svc.ensure("pr", 7, "feature-branch");
+    assert.strictEqual(info.branch, "feature-branch");
+    assert.ok(fs.existsSync(path.join(info.path, "pr-change.txt")));
+    const checkedOut = git(["rev-parse", "--abbrev-ref", "HEAD"], info.path).trim();
+    assert.strictEqual(checkedOut, "feature-branch");
   });
 
   it("rejects an existing worktree registered on a different branch", async () => {

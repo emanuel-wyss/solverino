@@ -41,7 +41,4 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 }
 
-export function deactivate(): void {
-  // Controller.dispose (via context.subscriptions) stops all running and
-  // queued agent processes on extension deactivation.
-}
+export function deactivate(): void {}

@@ -1,5 +1,5 @@
-import { runOk, Logger, RunError } from "../util";
-import { ChatSession, GitHubItem, ItemKind } from "../types";
+import { runOk, Logger } from "../util";
+import { GitHubItem, ItemKind } from "../types";
 
 const ISSUE_FIELDS = "number,title,body,url,state,author,updatedAt";
 const PR_FIELDS =
@@ -62,6 +62,8 @@ export function classifyPullRequests(
 }
 
 export class GitHubService {
+  private currentUser: string | undefined;
+
   constructor(
     private readonly repoPath: string,
     private readonly logger: Logger
@@ -93,8 +95,6 @@ export class GitHubService {
     return toItems(raw, "issue");
   }
 
-  private currentUser: string | undefined;
-
   async getCurrentUser(): Promise<string | undefined> {
     if (this.currentUser !== undefined) {
       return this.currentUser;
@@ -113,6 +113,21 @@ export class GitHubService {
     return this.currentUser;
   }
 
+  async getPRHeadRef(number: number): Promise<string> {
+    const out = await this.gh([
+      "pr",
+      "view",
+      String(number),
+      "--json",
+      "headRefName",
+    ]);
+    const ref = (JSON.parse(out) as { headRefName?: string }).headRefName;
+    if (!ref) {
+      throw new Error(`Could not determine the head branch of PR #${number}.`);
+    }
+    return ref;
+  }
+
   async listPullRequests(): Promise<PullRequestSections> {
     const raw = JSON.parse(
       await this.gh([
@@ -129,115 +144,6 @@ export class GitHubService {
     const items = toItems(raw, "pr");
     return classifyPullRequests(items, await this.getCurrentUser());
   }
-
-  async getPRBaseRef(number: number): Promise<string> {
-    const out = await this.gh([
-      "pr",
-      "view",
-      String(number),
-      "--json",
-      "baseRefName",
-    ]);
-    const base = (JSON.parse(out) as { baseRefName?: string }).baseRefName;
-    if (!base) {
-      throw new Error(`Could not determine the base branch of PR #${number}.`);
-    }
-    return base;
-  }
-
-  async createPullRequest(
-    branch: string,
-    title: string,
-    body: string,
-    base?: string
-  ): Promise<{ url: string }> {
-    try {
-      const args = [
-        "pr",
-        "create",
-        "--head",
-        branch,
-        "--title",
-        title,
-        "--body",
-        body,
-      ];
-      if (base) {
-        args.push("--base", base);
-      }
-      const out = await this.gh(args);
-      const url = out.trim().split("\n").pop() ?? "";
-      return { url };
-    } catch (e) {
-      if (e instanceof RunError && /already exists/i.test(e.result.stderr)) {
-        const out = await this.gh([
-          "pr",
-          "view",
-          branch,
-          "--json",
-          "url",
-        ]);
-        return { url: (JSON.parse(out) as { url: string }).url };
-      }
-      throw e;
-    }
-  }
-
-  async createIssue(
-    title: string,
-    body: string,
-    assignee?: string
-  ): Promise<{ url: string }> {
-    const args = ["issue", "create", "--title", title, "--body", body];
-    if (assignee) {
-      args.push("--assignee", assignee);
-    }
-    const out = await this.gh(args);
-    const url = out.trim().split("\n").pop() ?? "";
-    return { url };
-  }
-
-  async comment(item: GitHubItem, body: string): Promise<void> {
-    if (item.kind === "issue") {
-      await this.gh(["issue", "comment", String(item.number), "--body", body]);
-    } else {
-      await this.gh(["pr", "comment", String(item.number), "--body", body]);
-    }
-  }
-}
-
-export function buildErrorIssueTitle(session: ChatSession): string {
-  const kind = session.kind === "issue" ? "Issue" : "PR";
-  const message = (session.errorMessage ?? "Agent error").replace(/\s+/g, " ").trim();
-  const truncated =
-    message.length > 80 ? `${message.slice(0, 77).trimEnd()}…` : message;
-  return `Solverino: ${kind} #${session.number} agent error — ${truncated}`;
-}
-
-export function buildErrorIssueBody(session: ChatSession): string {
-  const kind = session.kind === "issue" ? "Issue" : "Pull Request";
-  const lastAgent = [...session.history]
-    .reverse()
-    .find((m) => m.role === "agent");
-  const log = lastAgent ? lastAgent.text.trim().slice(-4000) : "";
-  return [
-    `The Solverino agent run for ${kind} #${session.number} (${session.title}) failed.`,
-    "",
-    "## Error",
-    "```",
-    session.errorMessage ?? "Agent exited with an unknown error.",
-    "```",
-    "",
-    "## Context",
-    `- ${kind}: #${session.number}`,
-    session.branch ? `- Branch: \`${session.branch}\`` : "- Branch: none",
-    session.worktreePath ? `- Worktree: \`${session.worktreePath}\`` : "- Worktree: none",
-    "",
-    log ? "## Agent output (tail)" : "## Agent output",
-    "```",
-    log || "(no agent output captured)",
-    "```",
-  ].join("\n");
 }
 
 export function isAuthOrMissingCliError(e: unknown): string | undefined {
