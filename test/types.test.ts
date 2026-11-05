@@ -47,6 +47,46 @@ describe("deriveCheckState", () => {
   it("reports success only when every check succeeded", () => {
     assert.strictEqual(deriveCheckState([{ state: "SUCCESS" }]), "success");
   });
+
+  it("handles GitHub Actions CheckRun entries", () => {
+    assert.strictEqual(
+      deriveCheckState([{ status: "in_progress", conclusion: null }]),
+      "pending"
+    );
+    assert.strictEqual(
+      deriveCheckState([{ status: "completed", conclusion: "failure" }]),
+      "failure"
+    );
+    assert.strictEqual(
+      deriveCheckState([{ status: "completed", conclusion: "success" }]),
+      "success"
+    );
+    assert.strictEqual(
+      deriveCheckState([{ status: "completed", conclusion: "neutral" }]),
+      "success"
+    );
+    assert.strictEqual(
+      deriveCheckState([{ status: "completed", conclusion: "timed_out" }]),
+      "failure"
+    );
+  });
+
+  it("mixes StatusContext and CheckRun entries", () => {
+    assert.strictEqual(
+      deriveCheckState([
+        { state: "SUCCESS" },
+        { status: "completed", conclusion: "failure" },
+      ]),
+      "failure"
+    );
+    assert.strictEqual(
+      deriveCheckState([
+        { state: "SUCCESS" },
+        { status: "queued", conclusion: null },
+      ]),
+      "pending"
+    );
+  });
 });
 
 describe("itemStatusText", () => {

@@ -202,10 +202,14 @@ export class WorktreeService {
   }
 
   async dirtyFileCount(wtPath: string): Promise<number> {
-    const result = await run("git", ["status", "--porcelain"], {
-      cwd: wtPath,
-      logger: this.logger,
-    });
+    const result = await run(
+      "git",
+      ["status", "--porcelain", "--untracked-files=all"],
+      {
+        cwd: wtPath,
+        logger: this.logger,
+      }
+    );
     if (result.code !== 0) {
       return 0;
     }

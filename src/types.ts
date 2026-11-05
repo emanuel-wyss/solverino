@@ -31,14 +31,63 @@ export function worktreeFolderName(
   return `solverino-${repoName}-${kind}-${number}`;
 }
 
+export interface StatusContextEntry {
+  state: string;
+}
+
+export interface CheckRunEntry {
+  status: string;
+  conclusion?: string | null;
+}
+
+export function isCheckRun(
+  entry: StatusContextEntry | CheckRunEntry
+): entry is CheckRunEntry {
+  return "status" in entry;
+}
+
+export function normalizeCheckState(
+  entry: StatusContextEntry | CheckRunEntry
+): "FAILURE" | "PENDING" | "SUCCESS" | "UNKNOWN" {
+  if (isCheckRun(entry)) {
+    const status = entry.status.toUpperCase();
+    if (status !== "COMPLETED") {
+      return "PENDING";
+    }
+    const conclusion = (entry.conclusion ?? "").toUpperCase();
+    if (
+      ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(
+        conclusion
+      )
+    ) {
+      return "FAILURE";
+    }
+    if (conclusion === "SUCCESS" || conclusion === "NEUTRAL" || conclusion === "SKIPPED") {
+      return "SUCCESS";
+    }
+    return "UNKNOWN";
+  }
+  const state = entry.state.toUpperCase();
+  if (["FAILURE", "ERROR"].includes(state)) {
+    return "FAILURE";
+  }
+  if (state === "PENDING") {
+    return "PENDING";
+  }
+  if (state === "SUCCESS") {
+    return "SUCCESS";
+  }
+  return "UNKNOWN";
+}
+
 export function deriveCheckState(
-  rollup: { state: string }[] | null | undefined
+  rollup: (StatusContextEntry | CheckRunEntry)[] | null | undefined
 ): CheckState {
   if (!rollup || rollup.length === 0) {
     return "unknown";
   }
-  const states = rollup.map((c) => c.state.toUpperCase());
-  if (states.includes("FAILURE") || states.includes("ERROR")) {
+  const states = rollup.map(normalizeCheckState);
+  if (states.includes("FAILURE")) {
     return "failure";
   }
   if (states.includes("PENDING")) {

@@ -1,5 +1,11 @@
 import { runOk, Logger } from "../util";
-import { GitHubItem, ItemKind, deriveCheckState } from "../types";
+import {
+  GitHubItem,
+  ItemKind,
+  deriveCheckState,
+  StatusContextEntry,
+  CheckRunEntry,
+} from "../types";
 
 const ISSUE_FIELDS = "number,title,body,url,state,author,updatedAt,labels";
 const PR_FIELDS =
@@ -19,7 +25,7 @@ interface GhRawItem {
   labels?: { name: string }[] | null;
   isDraft?: boolean | null;
   reviewDecision?: string | null;
-  statusCheckRollup?: { state: string }[] | null;
+  statusCheckRollup?: (StatusContextEntry | CheckRunEntry)[] | null;
 }
 
 function toItems(raw: GhRawItem[], kind: ItemKind): GitHubItem[] {

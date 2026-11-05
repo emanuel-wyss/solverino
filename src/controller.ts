@@ -234,11 +234,16 @@ export class Controller {
 
     reg("solverino.refresh", () => this.refresh());
     reg("solverino.goto", () => this.gotoItem());
-    reg("solverino.showAllOpenIssues", () => {
+    reg("solverino.showAllOpenIssues", async () => {
+      const config = vscode.workspace.getConfiguration("solverino");
       const current = this.config<boolean>("showAllOpenIssues", false);
-      void vscode.workspace
-        .getConfiguration("solverino")
-        .update("showAllOpenIssues", !current, vscode.ConfigurationTarget.Global);
+      const inspect = config.inspect<boolean>("showAllOpenIssues");
+      const target =
+        inspect?.workspaceValue !== undefined
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+      await config.update("showAllOpenIssues", !current, target);
+      await this.refresh();
     });
     reg("solverino.openWorktree", (arg) => {
       const item = this.requireItem(arg);
@@ -498,34 +503,35 @@ export class Controller {
       return;
     }
     const item = picked.item;
+    const hasWorktree = !!this.lookupWorktree(item.kind, item.number);
     const action = await vscode.window.showQuickPick(
       [
         {
           label: "$(folder-opened) Open Worktree",
           action: "worktree",
-          hasWorktree: !!this.lookupWorktree(item.kind, item.number),
+          alwaysAvailable: true,
         },
         {
           label: "$(globe) Open on GitHub",
           action: "github",
-          hasWorktree: true,
+          alwaysAvailable: true,
         },
         {
           label: "$(cloud) Open in Codespace",
           action: "codespace",
-          hasWorktree: true,
+          alwaysAvailable: true,
         },
         {
           label: "$(sparkle) Open Copilot Agent",
           action: "agent",
-          hasWorktree: true,
+          alwaysAvailable: true,
         },
         {
           label: "$(trash) Cleanup Worktree",
           action: "cleanup",
-          hasWorktree: !!this.lookupWorktree(item.kind, item.number),
+          alwaysAvailable: hasWorktree,
         },
-      ].filter((a) => a.hasWorktree),
+      ].filter((a) => a.alwaysAvailable),
       { placeHolder: `What do you want to do with ${item.kind} #${item.number}?` }
     );
     if (!action) {
