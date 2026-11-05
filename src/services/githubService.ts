@@ -76,13 +76,29 @@ export class GitHubService {
     return toItems(raw, "pr");
   }
 
+  async getPRBaseRef(number: number): Promise<string> {
+    const out = await this.gh([
+      "pr",
+      "view",
+      String(number),
+      "--json",
+      "baseRefName",
+    ]);
+    const base = (JSON.parse(out) as { baseRefName?: string }).baseRefName;
+    if (!base) {
+      throw new Error(`Could not determine the base branch of PR #${number}.`);
+    }
+    return base;
+  }
+
   async createPullRequest(
     branch: string,
     title: string,
-    body: string
+    body: string,
+    base?: string
   ): Promise<{ url: string }> {
     try {
-      const out = await this.gh([
+      const args = [
         "pr",
         "create",
         "--head",
@@ -91,7 +107,11 @@ export class GitHubService {
         title,
         "--body",
         body,
-      ]);
+      ];
+      if (base) {
+        args.push("--base", base);
+      }
+      const out = await this.gh(args);
       const url = out.trim().split("\n").pop() ?? "";
       return { url };
     } catch (e) {
