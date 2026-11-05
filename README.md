@@ -4,7 +4,7 @@ A VS Code extension that shows every open/assigned Issue and Pull Request of you
 
 ## Features
 
-- **Overview tree view** (Activity Bar → Solverino): assigned Issues and open PRs with live status badges — idle / working / needs review / PR opened / error. Auto-refreshes on a configurable interval.
+- **Overview tree view** (Activity Bar → Solverino): assigned Issues and open PRs with live status badges — idle / working / needs review / PR opened / error. Auto-refreshes on a configurable interval. Lists up to 1000 open items per category.
 - **Per-Issue/PR chat panels**: full chat UX with streaming agent output, message history persisted across reloads.
 - **Worktree isolation**: each chat maps 1:1 to its own `git worktree` (`solverino-<repo>-issue-42`) and branch (`issue-42`). Agents work in parallel without stepping on each other.
 - **Agent engine**: runs any CLI agent (default: GitHub Copilot CLI, `copilot -p "<prompt>"`) with `cwd` set to the chat's worktree. Session resume on follow-up turns.
