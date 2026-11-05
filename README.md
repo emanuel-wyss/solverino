@@ -49,6 +49,10 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 | `solverino.pollIntervalSeconds` | `60` | Refresh interval for Issues/PRs; `0` disables polling |
 | `solverino.showAllOpenIssues` | `false` | Show all open issues, not only the ones assigned to you |
 
+## Releases
+
+User-facing changes are tracked in [RELEASE_NOTES.md](RELEASE_NOTES.md). Add entries to its **Unreleased** section as changes land; each release gets its own section there and in the GitHub release.
+
 ## Development
 
 ```bash
