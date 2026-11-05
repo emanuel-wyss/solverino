@@ -61,6 +61,10 @@ npm test            # mocha unit tests (worktree service, branch naming, queue, 
 
 Press F5 to launch an Extension Development Host with Solverino loaded.
 
+Build a local `.vsix` with `npm run vsix` and install it via Extensions → ⋯ → **Install from VSIX…**.
+
+Every push to `main` automatically builds and publishes a `.vsix` to the repo's GitHub Releases (see `.github/workflows/release.yml`).
+
 ## Notes & limitations
 
 - VS Code has no public API to drive built-in Copilot chat sessions, so Solverino runs its own agent processes and renders them in its own chat UI. A Copilot Chat participant (`@solverino`) plus Language Model Tools is planned for v2.

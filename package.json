@@ -208,7 +208,8 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.json --outDir out && mocha 'out/test/**/*.test.js'",
-    "package": "vsce package"
+    "package": "vsce package",
+    "vsix": "vsce package --allow-missing-repository"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -216,6 +217,7 @@
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.20.1",
     "mocha": "^10.3.0",
-    "typescript": "^5.4.2"
+    "typescript": "^5.4.2",
+    "@vscode/vsce": "^3.6.0"
   }
 }
