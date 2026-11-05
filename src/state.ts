@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ChatSession, ChatMessage, GitHubItem, ItemKind, SessionStatus, sessionId } from "./types";
 
-const STORAGE_KEY = "swarmforge.sessions";
+const STORAGE_KEY = "solverino.sessions";
 
 interface PersistedSession {
   id: string;

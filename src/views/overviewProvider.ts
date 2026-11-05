@@ -91,7 +91,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
       }\n${item.title}\nby ${item.author}\n\n${item.url}`,
       context: `${item.kind}:${status}`,
       command: {
-        command: "swarmforge.openChat",
+        command: "solverino.openChat",
         title: "Start Chat",
         arguments: [item],
       },

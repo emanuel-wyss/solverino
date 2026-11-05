@@ -51,5 +51,5 @@ export function worktreeFolderName(
   kind: ItemKind,
   number: number
 ): string {
-  return `swarmforge-${repoName}-${kind}-${number}`;
+  return `solverino-${repoName}-${kind}-${number}`;
 }

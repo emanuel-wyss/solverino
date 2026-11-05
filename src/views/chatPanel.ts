@@ -16,7 +16,7 @@ interface PanelState {
 }
 
 export class ChatPanel {
-  public static readonly viewType = "swarmforge.chat";
+  public static readonly viewType = "solverino.chat";
 
   private panel: vscode.WebviewPanel;
   private actionHandler: ((action: ChatPanelAction) => void) | undefined;
@@ -76,7 +76,7 @@ export class ChatPanel {
 
   private titleFor(session: ChatSession): string {
     const kind = session.kind === "issue" ? "Issue" : "PR";
-    return `Swarmforge: ${kind} #${session.number}`;
+    return `Solverino: ${kind} #${session.number}`;
   }
 
   render(state?: PanelState): void {

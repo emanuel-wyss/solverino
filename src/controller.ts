@@ -21,7 +21,7 @@ export class Controller {
   private repoPath: string;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.outputChannel = vscode.window.createOutputChannel("Swarmforge");
+    this.outputChannel = vscode.window.createOutputChannel("Solverino");
     this.logger = {
       debug: (m) => this.outputChannel.appendLine(`[debug] ${m}`),
       info: (m) => this.outputChannel.appendLine(`[info] ${m}`),
@@ -62,7 +62,7 @@ export class Controller {
     this.context.subscriptions.push(
       this.outputChannel,
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (!e.affectsConfiguration("swarmforge")) {
+        if (!e.affectsConfiguration("solverino")) {
           return;
         }
         this.runner.setMaxConcurrent(
@@ -76,14 +76,14 @@ export class Controller {
   private static requireRepoPath(): string {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
-      throw new Error("Swarmforge requires a workspace folder to be open.");
+      throw new Error("Solverino requires a workspace folder to be open.");
     }
     return folder.uri.fsPath;
   }
 
   private config<T>(key: string, fallback: T): T {
     return vscode.workspace
-      .getConfiguration("swarmforge")
+      .getConfiguration("solverino")
       .get<T>(key, fallback) as T;
   }
 
@@ -111,7 +111,7 @@ export class Controller {
     } catch (e) {
       const msg = isAuthOrMissingCliError(e) ?? String(e);
       this.logger.error(msg);
-      void vscode.window.showErrorMessage(`Swarmforge: ${msg}`);
+      void vscode.window.showErrorMessage(`Solverino: ${msg}`);
       this.tree.setItems([], []);
     } finally {
       this.tree.setLoading(false);
@@ -126,30 +126,30 @@ export class Controller {
         vscode.commands.registerCommand(id, cb)
       );
 
-    reg("swarmforge.refresh", () => this.refresh());
-    reg("swarmforge.openChat", (item: GitHubItem) => this.openChat(item));
-    reg("swarmforge.createWorktree", (item: GitHubItem) =>
+    reg("solverino.refresh", () => this.refresh());
+    reg("solverino.openChat", (item: GitHubItem) => this.openChat(item));
+    reg("solverino.createWorktree", (item: GitHubItem) =>
       this.createWorktree(item)
     );
-    reg("swarmforge.cleanupWorktree", (item: GitHubItem) =>
+    reg("solverino.cleanupWorktree", (item: GitHubItem) =>
       this.cleanupWorktree(item)
     );
-    reg("swarmforge.startAgent", (item: GitHubItem) =>
+    reg("solverino.startAgent", (item: GitHubItem) =>
       this.startAgent(item, buildDefaultPrompt(item.kind, item.number, item.title, item.body))
     );
-    reg("swarmforge.stopAgent", (item: GitHubItem) =>
+    reg("solverino.stopAgent", (item: GitHubItem) =>
       this.stopAgent(sessionId(item.kind, item.number))
     );
-    reg("swarmforge.commit", (item: GitHubItem) =>
+    reg("solverino.commit", (item: GitHubItem) =>
       this.commit(sessionId(item.kind, item.number))
     );
-    reg("swarmforge.pushAndCreatePR", (item: GitHubItem) =>
+    reg("solverino.pushAndCreatePR", (item: GitHubItem) =>
       this.pushAndCreatePR(sessionId(item.kind, item.number))
     );
-    reg("swarmforge.openWorktreeInNewWindow", (item: GitHubItem) =>
+    reg("solverino.openWorktreeInNewWindow", (item: GitHubItem) =>
       this.openWorktreeInNewWindow(sessionId(item.kind, item.number))
     );
-    reg("swarmforge.openOnGitHub", (item: GitHubItem) =>
+    reg("solverino.openOnGitHub", (item: GitHubItem) =>
       void vscode.env.openExternal(vscode.Uri.parse(item.url))
     );
   }
@@ -199,7 +199,7 @@ export class Controller {
     const id = sessionId(item.kind, item.number);
     if (this.runner.isRunning(id)) {
       void vscode.window.showWarningMessage(
-        "Swarmforge: stop the agent before cleaning up the worktree."
+        "Solverino: stop the agent before cleaning up the worktree."
       );
       return;
     }
@@ -236,7 +236,7 @@ export class Controller {
     }
     if (this.runner.isRunning(id)) {
       void vscode.window.showInformationMessage(
-        `Swarmforge: agent for ${item.kind} #${item.number} is already running.`
+        `Solverino: agent for ${item.kind} #${item.number} is already running.`
       );
       return;
     }
@@ -297,7 +297,7 @@ export class Controller {
       );
       if (!dirty) {
         void vscode.window.showInformationMessage(
-          "Swarmforge: no changes to commit."
+          "Solverino: no changes to commit."
         );
         return;
       }
@@ -336,7 +336,7 @@ export class Controller {
       .catch(() => false);
     if (hasChanges) {
       const commit = await vscode.window.showWarningMessage(
-        "Swarmforge: the worktree has uncommitted changes. Commit first?",
+        "Solverino: the worktree has uncommitted changes. Commit first?",
         "Commit & continue",
         "Cancel"
       );
@@ -350,7 +350,7 @@ export class Controller {
       await this.worktrees.push(session.worktreePath, session.branch);
       const pr = await this.github.createPullRequest(
         session.branch,
-        `Swarmforge: ${session.title}`,
+        `Solverino: ${session.title}`,
         `Automated change for ${session.kind} #${session.number}: ${session.title}`
       );
       this.store.update(id, { status: "prOpened", prUrl: pr.url });
@@ -372,7 +372,7 @@ export class Controller {
     const session = this.store.get(id);
     if (!session?.worktreePath) {
       void vscode.window.showWarningMessage(
-        "Swarmforge: no worktree for this chat yet."
+        "Solverino: no worktree for this chat yet."
       );
       return;
     }
@@ -448,7 +448,7 @@ export class Controller {
       });
       this.store.appendMessage(id, {
         role: "system",
-        text: `Agent exited with code ${code ?? "unknown"}. Check the Swarmforge output channel for details.`,
+        text: `Agent exited with code ${code ?? "unknown"}. Check the Solverino output channel for details.`,
         timestamp: Date.now(),
       });
     }
@@ -487,6 +487,6 @@ export class Controller {
       this.refreshPanel(session, panel);
     }
     this.tree.refresh();
-    void vscode.window.showErrorMessage(`Swarmforge: ${message}`);
+    void vscode.window.showErrorMessage(`Solverino: ${message}`);
   }
 }

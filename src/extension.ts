@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { Controller } from "./controller";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const outputChannel = vscode.window.createOutputChannel("Swarmforge");
+  const outputChannel = vscode.window.createOutputChannel("Solverino");
   context.subscriptions.push(outputChannel);
 
   let controller: Controller;
@@ -11,14 +11,14 @@ export function activate(context: vscode.ExtensionContext): void {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     outputChannel.appendLine(`[error] ${message}`);
-    void vscode.window.showErrorMessage(`Swarmforge: ${message}`);
+    void vscode.window.showErrorMessage(`Solverino: ${message}`);
     return;
   }
   controller.activate();
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider(
-      "swarmforge.overview",
+      "solverino.overview",
       controller.overviewProvider
     )
   );

@@ -21,7 +21,7 @@ describe("naming", () => {
   it("worktreeFolderName includes repo, kind, number", () => {
     assert.strictEqual(
       worktreeFolderName("myrepo", "issue", 42),
-      "swarmforge-myrepo-issue-42"
+      "solverino-myrepo-issue-42"
     );
   });
 });
@@ -67,7 +67,7 @@ describe("WorktreeService", () => {
   }
 
   beforeEach("create temp repo", () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), "swarmforge-test-"));
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "solverino-test-"));
     repo = path.join(base, "repo");
     worktreeParent = path.join(base, "worktrees");
     fs.mkdirSync(repo);
@@ -99,7 +99,7 @@ describe("WorktreeService", () => {
     assert.strictEqual(info.branch, "issue-42");
     assert.strictEqual(
       info.path,
-      path.join(worktreeParent, "swarmforge-repo-issue-42")
+      path.join(worktreeParent, "solverino-repo-issue-42")
     );
     assert.ok(fs.existsSync(path.join(info.path, "a.txt")));
     assert.strictEqual(info.created, true);
