@@ -175,7 +175,7 @@ export class Controller {
         this.github.listIssues(assignedOnly),
         this.github.listPullRequests(),
       ]);
-      this.tree.setItems(issues, prs);
+      this.tree.setItems(issues, prs.mine, prs.reviewRequested);
     } catch (e) {
       const msg = isAuthOrMissingCliError(e) ?? String(e);
       this.logger.error(msg);

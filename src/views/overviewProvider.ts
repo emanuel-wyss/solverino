@@ -17,6 +17,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
 
   private issues: GitHubItem[] = [];
   private prs: GitHubItem[] = [];
+  private reviewPrs: GitHubItem[] = [];
   private loading = false;
 
   constructor(
@@ -35,9 +36,14 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     this.refresh();
   }
 
-  setItems(issues: GitHubItem[], prs: GitHubItem[]): void {
+  setItems(
+    issues: GitHubItem[],
+    prs: GitHubItem[],
+    reviewPrs: GitHubItem[] = []
+  ): void {
     this.issues = issues;
     this.prs = prs;
+    this.reviewPrs = reviewPrs;
   }
 
   getTreeItem(element: OverviewNode): vscode.TreeItem {
@@ -49,8 +55,15 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
       const nodes: OverviewNode[] = [];
       if (this.prs.length > 0) {
         nodes.push(
-          new OverviewNode("Open Pull Requests", "section-prs", {
+          new OverviewNode("My Pull Requests", "section-prs", {
             expand: vscode.TreeItemCollapsibleState.Expanded,
+          })
+        );
+      }
+      if (this.reviewPrs.length > 0) {
+        nodes.push(
+          new OverviewNode("Review Requested", "section-review-prs", {
+            expand: vscode.TreeItemCollapsibleState.Collapsed,
           })
         );
       }
@@ -74,6 +87,9 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     }
     if (element.id === "section-prs") {
       return this.prs.map((i) => this.itemNode(i));
+    }
+    if (element.id === "section-review-prs") {
+      return this.reviewPrs.map((i) => this.itemNode(i));
     }
     if (element.id === "section-issues") {
       return this.issues.map((i) => this.itemNode(i));
