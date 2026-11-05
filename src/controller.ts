@@ -271,7 +271,7 @@ export class Controller {
   private async createWorktree(
     item: GitHubItem,
     panel?: ChatPanel
-  ): Promise<void> {
+  ): Promise<boolean> {
     const session = this.store.getOrCreate(item);
     try {
       const info = await this.worktrees.ensure(item.kind, item.number);
@@ -283,8 +283,10 @@ export class Controller {
       const updated = this.store.get(session.id)!;
       this.refreshPanel(updated, panel);
       this.tree.refresh();
+      return true;
     } catch (e) {
       this.handleError(session.id, e, panel);
+      return false;
     }
   }
 
@@ -344,7 +346,8 @@ export class Controller {
         await this.worktrees.remove(
           item.kind,
           item.number,
-          session?.branchOwned === true
+          session?.branchOwned === true,
+          session?.worktreePath
         );
         const updated = this.store.update(id, {
           worktreePath: undefined,
@@ -371,7 +374,10 @@ export class Controller {
         );
         return;
       }
-      await this.createWorktree(item);
+      const created = await this.createWorktree(item);
+      if (!created) {
+        return;
+      }
       const session = this.store.get(id);
       if (!session?.worktreePath) {
         return;
