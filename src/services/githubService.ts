@@ -224,91 +224,160 @@ export class GitHubService {
       ]);
       const state = (JSON.parse(out) as { state?: string }).state;
       return state?.toUpperCase();
-    } catch {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (/could not resolve|not found/i.test(message)) {
+        return "NOT_FOUND";
+      }
+      this.logger.warn(
+        `Could not determine the state of ${kind} #${number}: ${message}`
+      );
       return undefined;
     }
   }
 
-  private async ghGraphql(query: string): Promise<unknown> {
-    const out = await this.gh(["api", "graphql", "-f", `query=${query}`]);
-    return JSON.parse(out) as unknown;
+  private static readonly SEARCH_PAGE_SIZE = 50;
+  private static readonly SEARCH_MAX_PAGES = 5;
+
+  private async ghGraphql<T>(selection: string): Promise<T> {
+    const document = `query { ${selection} }`;
+    const out = await this.gh([
+      "api",
+      "graphql",
+      "-f",
+      `query=${document}`,
+    ]);
+    return JSON.parse(out) as T;
+  }
+
+  private async searchAllPages<T>(
+    buildSelection: (after?: string) => string,
+    extract: (
+      page: unknown,
+      user: string
+    ) => { items: T[]; hasNextPage: boolean; endCursor?: string }
+  ): Promise<T[]> {
+    const user = await this.getCurrentUser();
+    if (!user) {
+      return [];
+    }
+    const all: T[] = [];
+    let after: string | undefined;
+    for (
+      let page = 0;
+      page < GitHubService.SEARCH_MAX_PAGES && (page === 0 || after);
+      page++
+    ) {
+      const parsed = await this.ghGraphql(buildSelection(after));
+      const { items, hasNextPage, endCursor } = extract(parsed, user);
+      all.push(...items);
+      if (!hasNextPage || !endCursor) {
+        break;
+      }
+      after = endCursor;
+    }
+    return all;
   }
 
   async listRecentlyMergedPRs(days = 7): Promise<ActivityItem[]> {
     const slug = await this.getRepoSlug();
-    const user = await this.getCurrentUser();
-    if (!user) {
-      return [];
-    }
-    const query =
-      `search(query: "repo:${slug} is:pr merged:>=${isoDateDaysAgo(days)}", type: ISSUE, first: 50) ` +
-      `{ nodes { ... on PullRequest { number title url closedAt mergedBy { login } } } }`;
-    const parsed = (await this.ghGraphql(query)) as {
-      data?: {
-        search?: {
-          nodes?:
-            | {
-                number: number;
-                title: string;
-                url: string;
-                closedAt: string;
-                mergedBy?: { login?: string } | null;
-              }[]
-            | null;
+    const qualifier = `repo:${slug} is:pr merged:>=${isoDateDaysAgo(days)}`;
+    return this.searchAllPages(
+      (after) =>
+        `search(query: "${qualifier}", type: ISSUE, first: ${
+          GitHubService.SEARCH_PAGE_SIZE
+        }${after ? `, after: "${after}"` : ""}) ` +
+        `{ nodes { ... on PullRequest { number title url closedAt mergedBy { login } } } ` +
+        `pageInfo { hasNextPage endCursor } }`,
+      (page, user) => {
+        const parsed = page as {
+          data?: {
+            search?: {
+              nodes?:
+                | {
+                    number: number;
+                    title: string;
+                    url: string;
+                    closedAt: string;
+                    mergedBy?: { login?: string } | null;
+                  }[]
+                | null;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+          };
         };
-      };
-    };
-    const nodes = parsed.data?.search?.nodes ?? [];
-    return nodes
-      .filter((n) => isMergedBy(n.mergedBy?.login, user))
-      .map((n) => ({
-        kind: "pr" as const,
-        number: n.number,
-        title: n.title,
-        url: n.url,
-        closedAt: n.closedAt,
-      }));
+        const search = parsed.data?.search;
+        const nodes = search?.nodes ?? [];
+        return {
+          items: nodes
+            .filter((n) => isMergedBy(n.mergedBy?.login, user))
+            .map((n) => ({
+              kind: "pr" as const,
+              number: n.number,
+              title: n.title,
+              url: n.url,
+              closedAt: n.closedAt,
+            })),
+          hasNextPage: !!search?.pageInfo?.hasNextPage,
+          endCursor: search?.pageInfo?.endCursor,
+        };
+      }
+    );
   }
 
   async listRecentlyClosedIssues(days = 7): Promise<ActivityItem[]> {
     const slug = await this.getRepoSlug();
-    const user = await this.getCurrentUser();
-    if (!user) {
-      return [];
-    }
-    const query =
-      `search(query: "repo:${slug} is:issue closed:>=${isoDateDaysAgo(days)}", type: ISSUE, first: 50) ` +
-      `{ nodes { ... on Issue { number title url closedAt ` +
-      `timelineItems(itemTypes: CLOSED_EVENT, first: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } }`;
-    const parsed = (await this.ghGraphql(query)) as {
-      data?: {
-        search?: {
-          nodes?:
-            | {
-                number: number;
-                title: string;
-                url: string;
-                closedAt: string;
-                timelineItems?: {
-                  nodes?: { actor?: { login?: string } | null }[] | null;
-                } | null;
-              }[]
-            | null;
+    const qualifier = `repo:${slug} is:issue closed:>=${isoDateDaysAgo(days)}`;
+    return this.searchAllPages(
+      (after) =>
+        `search(query: "${qualifier}", type: ISSUE, first: ${
+          GitHubService.SEARCH_PAGE_SIZE
+        }${after ? `, after: "${after}"` : ""}) ` +
+        `{ nodes { ... on Issue { number title url closedAt ` +
+        `timelineItems(itemTypes: CLOSED_EVENT, last: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } ` +
+        `pageInfo { hasNextPage endCursor } }`,
+      (page, user) => {
+        const parsed = page as {
+          data?: {
+            search?: {
+              nodes?:
+                | {
+                    number: number;
+                    title: string;
+                    url: string;
+                    closedAt: string;
+                    timelineItems?: {
+                      nodes?: { actor?: { login?: string } | null }[] | null;
+                    } | null;
+                  }[]
+                | null;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+          };
         };
-      };
-    };
-    const nodes = parsed.data?.search?.nodes ?? [];
-    return nodes
-      .filter((n) =>
-        isClosedBy(n.timelineItems?.nodes?.[0]?.actor?.login, user)
-      )
-      .map((n) => ({
-        kind: "issue" as const,
-        number: n.number,
-        title: n.title,
-        url: n.url,
-        closedAt: n.closedAt,
-      }));
+        const search = parsed.data?.search;
+        const nodes = search?.nodes ?? [];
+        return {
+          items: nodes
+            .filter((n) =>
+              isClosedBy(
+                n.timelineItems?.nodes?.[n.timelineItems.nodes.length - 1]
+                  ?.actor?.login,
+                user
+              )
+            )
+            .map((n) => ({
+              kind: "issue" as const,
+              number: n.number,
+              title: n.title,
+              url: n.url,
+              closedAt: n.closedAt,
+            })),
+          hasNextPage: !!search?.pageInfo?.hasNextPage,
+          endCursor: search?.pageInfo?.endCursor,
+        };
+      }
+    );
   }
 
   async listPullRequests(): Promise<PullRequestSections> {

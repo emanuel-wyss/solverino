@@ -139,6 +139,19 @@ describe("WorktreeService", () => {
     assert.strictEqual(status.files.length, 0);
   });
 
+  it("mainRepoName resolves the main checkout name, also from a worktree", async () => {
+    const svc = makeService();
+    assert.strictEqual(await svc.mainRepoName(), "repo");
+    const info = await svc.ensure("issue", 42);
+    const wtService = new WorktreeService(info.path, worktreeParent, {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+    assert.strictEqual(await wtService.mainRepoName(), "repo");
+  });
+
   it("removeEntry removes an arbitrary worktree and its branch", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);

@@ -190,7 +190,7 @@ export class Controller {
     prs: GitHubItem[],
     reviewPrs: GitHubItem[]
   ): Promise<void> {
-    const repoName = this.repoName();
+    const repoName = await this.worktrees.mainRepoName();
     const openKeys = new Set<string>();
     for (const item of [...issues, ...prs, ...reviewPrs]) {
       openKeys.add(`${item.kind}:${item.number}`);
@@ -210,18 +210,12 @@ export class Controller {
         continue;
       }
       const state = await this.github.getItemState(parsed.kind, parsed.number);
-      if (state === "OPEN") {
+      if (state !== "CLOSED" && state !== "MERGED" && state !== "NOT_FOUND") {
         continue;
       }
       orphans.push({ branch, path: wtPath });
     }
     this.tree.setOrphans(orphans);
-  }
-
-  private repoName(): string {
-    return (
-      this.repoPath.replace(/.*[\\/]/, "").replace(/\.git$/, "") || "repo"
-    );
   }
 
   private async myWeek(): Promise<void> {
