@@ -175,6 +175,60 @@ describe("AgentRunner", () => {
     await first;
   });
 
+  it("stop terminates spawned worker processes too", async () => {
+    const outputs: string[] = [];
+    const runner = new AgentRunner(
+      2,
+      {
+        onOutput: (_sid, chunk) => outputs.push(chunk),
+        onExit: () => {},
+      },
+      silentLogger
+    );
+    const workerScript = "setTimeout(() => process.exit(0), 60000);";
+    const agentScript = `
+      const { spawn } = require('child_process');
+      const worker = spawn(process.execPath, ['-e', ${JSON.stringify(
+        workerScript
+      )}], { stdio: 'ignore' });
+      console.log('WORKER:' + worker.pid);
+      process.on('SIGTERM', () => {});
+      setTimeout(() => process.exit(0), 60000);
+    `;
+    const done = runner.run({
+      command: process.execPath,
+      args: ["-e", agentScript],
+      cwd: process.cwd(),
+      sessionId: "issue-7",
+    });
+    const deadline = Date.now() + 5000;
+    let workerPid: number | undefined;
+    while (Date.now() < deadline && !workerPid) {
+      await new Promise((r) => setTimeout(r, 50));
+      for (const chunk of outputs) {
+        const match = chunk.match(/WORKER:(\d+)/);
+        if (match) {
+          workerPid = Number(match[1]);
+        }
+      }
+    }
+    assert.ok(workerPid, "agent should print its worker pid");
+    assert.strictEqual(runner.stop("issue-7"), "killed");
+    await done;
+    await new Promise((r) => setTimeout(r, 500));
+    let workerAlive = true;
+    try {
+      process.kill(workerPid!, 0);
+    } catch {
+      workerAlive = false;
+    }
+    assert.strictEqual(
+      workerAlive,
+      false,
+      "worker process should have been terminated with the agent"
+    );
+  });
+
   it("stop kills a running agent", async () => {
     const runner = new AgentRunner(
       2,
