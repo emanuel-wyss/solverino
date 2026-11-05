@@ -2,6 +2,9 @@ import * as path from "path";
 import { runOk, Logger, PromiseQueue } from "../util";
 import { ItemKind, worktreeFolderName, branchName } from "../types";
 
+const SENSITIVE_FILE_PATTERN =
+  /(^|\/)\.env($|\.)|(^|\/)\.npmrc$|(^|\/)\.netrc$|(^|\/)\.pem$|(^|\/)id_rsa|(^|\/)id_ed25519|credential|secret|\.htpasswd$/i;
+
 export interface WorktreeInfo {
   branch: string;
   path: string;
@@ -45,7 +48,7 @@ export class WorktreeService {
         kind,
         number
       );
-      const existing = await this.list();
+      const existing = await this.listStrict();
       const match = existing.find((w) => w.path === wtPath);
       if (match) {
         return {
@@ -115,27 +118,37 @@ export class WorktreeService {
     });
   }
 
+  async listStrict(): Promise<{ branch: string; path: string }[]> {
+    const result = await runOk(
+      "git",
+      ["worktree", "list", "--porcelain"],
+      { cwd: this.repoPath, logger: this.logger }
+    );
+    return WorktreeService.parseWorktreeList(result.stdout);
+  }
+
+  private static parseWorktreeList(
+    porcelain: string
+  ): { branch: string; path: string }[] {
+    const worktrees: { branch: string; path: string }[] = [];
+    let currentPath: string | undefined;
+    for (const line of porcelain.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        currentPath = line.slice("worktree ".length);
+      } else if (line.startsWith("branch ") && currentPath) {
+        worktrees.push({
+          branch: line.slice("branch refs/heads/".length),
+          path: currentPath,
+        });
+        currentPath = undefined;
+      }
+    }
+    return worktrees;
+  }
+
   async list(): Promise<{ branch: string; path: string }[]> {
     try {
-      const result = await runOk(
-        "git",
-        ["worktree", "list", "--porcelain"],
-        { cwd: this.repoPath, logger: this.logger }
-      );
-      const worktrees: { branch: string; path: string }[] = [];
-      let currentPath: string | undefined;
-      for (const line of result.stdout.split("\n")) {
-        if (line.startsWith("worktree ")) {
-          currentPath = line.slice("worktree ".length);
-        } else if (line.startsWith("branch ") && currentPath) {
-          worktrees.push({
-            branch: line.slice("branch refs/heads/".length),
-            path: currentPath,
-          });
-          currentPath = undefined;
-        }
-      }
-      return worktrees;
+      return await this.listStrict();
     } catch {
       return [];
     }
@@ -148,6 +161,39 @@ export class WorktreeService {
       { cwd: wtPath, logger: this.logger }
     );
     return result.stdout.trim().length > 0;
+  }
+
+  async statusFiles(
+    wtPath: string
+  ): Promise<{ files: string[]; sensitive: string[] }> {
+    const result = await runOk("git", ["status", "--porcelain"], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    const files = result.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.replace(/^\S+\s+/, ""))
+      .map((f) => f.replace(/^"|"$/g, ""));
+    const sensitive = files.filter((f) => SENSITIVE_FILE_PATTERN.test(f));
+    return { files, sensitive };
+  }
+
+  async unpushedCommitCount(
+    wtPath: string,
+    branch: string
+  ): Promise<number> {
+    const result = await runOk(
+      "git",
+      ["rev-list", "--count", branch, "--not", "--remotes"],
+      { cwd: wtPath, logger: this.logger }
+    ).catch(() => undefined);
+    if (!result) {
+      return 0;
+    }
+    const count = parseInt(result.stdout.trim(), 10);
+    return Number.isFinite(count) && count > 0 ? count : 0;
   }
 
   async commitAll(
@@ -191,9 +237,11 @@ export class WorktreeService {
           logger: this.logger,
         });
         return "FETCH_HEAD";
-      } catch {
-        this.logger.warn(
-          `Could not fetch head of PR #${number}; falling back to the current branch.`
+      } catch (e) {
+        throw new Error(
+          `Could not fetch the head of PR #${number}; refusing to build the worktree from unrelated code. (${
+            e instanceof Error ? e.message : e
+          })`
         );
       }
     }
