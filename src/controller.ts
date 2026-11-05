@@ -1,12 +1,14 @@
 import * as vscode from "vscode";
+import * as path from "path";
 import {
   GitHubService,
   isAuthOrMissingCliError,
+  codespaceNewUrl,
 } from "./services/githubService";
 import { WorktreeService } from "./services/worktreeService";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { Logger } from "./util";
-import { GitHubItem } from "./types";
+import { GitHubItem, branchName } from "./types";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -18,6 +20,12 @@ export class Controller {
   private worktreesByPath = new Map<string, string>();
   private pollTimer: NodeJS.Timeout | undefined;
   private repoPath: string;
+  private static readonly OPEN_AGENT_FLAG_KEY =
+    "solverino.openCopilotAgentOnStart";
+  private static readonly OPEN_AGENT_FLAG_TTL_MS = 5 * 60 * 1000;
+  private static readonly URI_HANDLER_PATH = "/open-agent";
+  private static readonly URI_HANDLER_BASE =
+    "vscode://emanuel-wyss.solverino/open-agent";
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel("Solverino");
@@ -84,6 +92,12 @@ export class Controller {
     this.tree.setLoading(true);
     void this.refresh();
     this.startPolling();
+    this.context.subscriptions.push(
+      vscode.window.registerUriHandler({
+        handleUri: (uri) => this.handleUri(uri),
+      })
+    );
+    void this.maybeOpenAgentChatOnStart();
     this.context.subscriptions.push(
       this.outputChannel,
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -195,6 +209,18 @@ export class Controller {
         void vscode.env.openExternal(vscode.Uri.parse(item.url));
       }
     });
+    reg("solverino.openInCodespace", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.openInCodespace(item);
+      }
+    });
+    reg("solverino.openCopilotAgent", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.openCopilotAgent(item);
+      }
+    });
   }
 
   private static toVscodeFileUri(fsPath: string): vscode.Uri {
@@ -217,6 +243,188 @@ export class Controller {
         vscode.Uri.file(fsPath),
         { forceNewWindow: true }
       );
+    }
+  }
+
+  private async openInCodespace(item: GitHubItem): Promise<void> {
+    try {
+      const baseSlug = await this.github.getRepoSlug();
+      let slug = baseSlug;
+      let branch: string | undefined;
+      if (item.kind === "pr") {
+        const head = await this.github.getPRHead(item.number);
+        slug = head.repoSlug;
+        branch = head.ref;
+      } else {
+        branch = this.lookupWorktree(item.kind, item.number)?.branch;
+      }
+      if (branch && slug === baseSlug) {
+        if (!(await this.worktrees.hasRemoteBranch(branch))) {
+          const choice = await vscode.window.showWarningMessage(
+            `Branch "${branch}" exists only locally. Push it to GitHub before opening a codespace?`,
+            { modal: true },
+            "Push branch",
+            "Use default branch"
+          );
+          if (choice === "Push branch") {
+            await this.worktrees.pushBranch(branch);
+          } else if (choice === "Use default branch") {
+            branch = await this.github.getDefaultBranch();
+          } else {
+            return;
+          }
+        }
+      }
+      let usedFallback = false;
+      if (!branch) {
+        branch = await this.github.getDefaultBranch();
+        usedFallback = true;
+      }
+      if (usedFallback) {
+        void vscode.window.showInformationMessage(
+          `Solverino: no worktree exists for this ${item.kind} yet, opening a codespace on the default branch (${branch}).`
+        );
+      }
+      await vscode.env.openExternal(
+        vscode.Uri.parse(codespaceNewUrl(slug, branch))
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
+    }
+  }
+
+  private async openAgentChat(): Promise<void> {
+    try {
+      await vscode.commands.executeCommand("workbench.action.chat.openInEditor");
+    } catch {
+      try {
+        await vscode.commands.executeCommand("workbench.action.chat.open");
+      } catch {
+        this.logger.warn(
+          "Could not open a Copilot Chat editor tab; open it manually with the Chat view."
+        );
+        return;
+      }
+    }
+    try {
+      await vscode.commands.executeCommand(
+        "workbench.action.chat.toggleAgentMode",
+        { modeId: "agent" }
+      );
+    } catch {
+      try {
+        await vscode.commands.executeCommand("chat.setMode", "agent");
+      } catch {
+        this.logger.warn(
+          "Could not switch the chat to agent mode; select it manually in the chat editor."
+        );
+      }
+    }
+  }
+
+  private currentWorkspaceFolder(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  private isSameFolder(a: string, b: string): boolean {
+    return path.resolve(a) === path.resolve(b);
+  }
+
+  private async handleUri(uri: vscode.Uri): Promise<void> {
+    if (uri.path !== Controller.URI_HANDLER_PATH) {
+      return;
+    }
+    const target = new URLSearchParams(uri.query).get("path");
+    const currentFolder = this.currentWorkspaceFolder();
+    if (!target || !currentFolder || !this.isSameFolder(target, currentFolder)) {
+      return;
+    }
+    await this.context.globalState.update(
+      Controller.OPEN_AGENT_FLAG_KEY,
+      undefined
+    );
+    await this.openAgentChat();
+  }
+
+  private async maybeOpenAgentChatOnStart(): Promise<void> {
+    const pending = this.context.globalState.get<{
+      path: string;
+      at: number;
+    }>(Controller.OPEN_AGENT_FLAG_KEY);
+    const currentFolder = this.currentWorkspaceFolder();
+    if (!pending || !currentFolder) {
+      return;
+    }
+    if (!this.isSameFolder(pending.path, currentFolder)) {
+      return;
+    }
+    await this.context.globalState.update(
+      Controller.OPEN_AGENT_FLAG_KEY,
+      undefined
+    );
+    if (Date.now() - pending.at > Controller.OPEN_AGENT_FLAG_TTL_MS) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await this.openAgentChat();
+  }
+
+  private async openCopilotAgent(item: GitHubItem): Promise<void> {
+    try {
+      let prHeadBranch: string | undefined;
+      if (item.kind === "pr") {
+        prHeadBranch = await this.github.getPRHeadRef(item.number);
+      }
+      const expectedBranch =
+        item.kind === "pr" && prHeadBranch
+          ? prHeadBranch
+          : branchName(item.kind, item.number);
+      const currentFolder = this.currentWorkspaceFolder();
+      if (currentFolder) {
+        const branch = await this.worktrees.currentBranch(currentFolder);
+        if (branch === expectedBranch) {
+          await this.openAgentChat();
+          return;
+        }
+      }
+      const info = await this.worktrees.ensure(
+        item.kind,
+        item.number,
+        prHeadBranch
+      );
+      this.worktreesByPath.set(info.path, info.branch);
+      this.tree.refresh();
+      if (
+        currentFolder &&
+        this.isSameFolder(currentFolder, info.path)
+      ) {
+        await this.openAgentChat();
+        return;
+      }
+      await this.context.globalState.update(Controller.OPEN_AGENT_FLAG_KEY, {
+        path: info.path,
+        at: Date.now(),
+      });
+      await vscode.env.openExternal(
+        vscode.Uri.parse(
+          `${Controller.URI_HANDLER_BASE}?path=${encodeURIComponent(info.path)}`
+        )
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const pending = this.context.globalState.get<{
+        path: string;
+        at: number;
+      }>(Controller.OPEN_AGENT_FLAG_KEY);
+      if (!pending || !this.isSameFolder(pending.path, info.path)) {
+        return;
+      }
+      this.openFolderWindow(info.path);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
     }
   }
 

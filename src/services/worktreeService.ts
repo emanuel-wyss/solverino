@@ -1,5 +1,5 @@
 import * as path from "path";
-import { runOk, Logger, PromiseQueue } from "../util";
+import { run, runOk, Logger, PromiseQueue } from "../util";
 import { ItemKind, worktreeFolderName, branchName } from "../types";
 
 export interface WorktreeInfo {
@@ -104,6 +104,41 @@ export class WorktreeService {
         created: true,
         branchCreated: !branchExists,
       };
+    });
+  }
+
+  async currentBranch(cwd: string): Promise<string | undefined> {
+    try {
+      const result = await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd,
+        logger: this.logger,
+      });
+      const branch = result.stdout.trim();
+      return result.code === 0 && branch && branch !== "HEAD"
+        ? branch
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async hasRemoteBranch(branch: string): Promise<boolean> {
+    try {
+      const result = await run(
+        "git",
+        ["ls-remote", "--exit-code", "--heads", "origin", branch],
+        { cwd: this.repoPath, logger: this.logger }
+      );
+      return result.code === 0 && result.stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  async pushBranch(branch: string): Promise<void> {
+    await runOk("git", ["push", "-u", "origin", branch], {
+      cwd: this.repoPath,
+      logger: this.logger,
     });
   }
 

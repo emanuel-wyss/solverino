@@ -42,6 +42,15 @@ export interface PullRequestSections {
   reviewRequested: GitHubItem[];
 }
 
+export function codespaceNewUrl(repoSlug: string, ref: string): string {
+  return `https://codespaces.new/${repoSlug}/tree/${ref}`;
+}
+
+export interface PRHead {
+  ref: string;
+  repoSlug: string;
+}
+
 export function classifyPullRequests(
   prs: GitHubItem[],
   currentUser?: string
@@ -63,6 +72,8 @@ export function classifyPullRequests(
 
 export class GitHubService {
   private currentUser: string | undefined;
+  private repoSlug: string | undefined;
+  private defaultBranch: string | undefined;
 
   constructor(
     private readonly repoPath: string,
@@ -113,19 +124,74 @@ export class GitHubService {
     return this.currentUser;
   }
 
-  async getPRHeadRef(number: number): Promise<string> {
+  async getRepoSlug(): Promise<string> {
+    if (this.repoSlug === undefined) {
+      const slug = (
+        await this.gh([
+          "repo",
+          "view",
+          "--json",
+          "nameWithOwner",
+          "--jq",
+          ".nameWithOwner",
+        ])
+      ).trim();
+      this.repoSlug = slug || undefined;
+    }
+    if (!this.repoSlug) {
+      throw new Error("Could not determine the GitHub repository.");
+    }
+    return this.repoSlug;
+  }
+
+  async getDefaultBranch(): Promise<string> {
+    if (this.defaultBranch === undefined) {
+      const branch = (
+        await this.gh([
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
+        ])
+      ).trim();
+      this.defaultBranch = branch || undefined;
+    }
+    if (!this.defaultBranch) {
+      throw new Error("Could not determine the default branch of the repository.");
+    }
+    return this.defaultBranch;
+  }
+
+  async getPRHead(number: number): Promise<PRHead> {
     const out = await this.gh([
       "pr",
       "view",
       String(number),
       "--json",
-      "headRefName",
+      "headRefName,headRepositoryOwner,headRepository",
     ]);
-    const ref = (JSON.parse(out) as { headRefName?: string }).headRefName;
-    if (!ref) {
+    const parsed = JSON.parse(out) as {
+      headRefName?: string;
+      headRepositoryOwner?: { login?: string };
+      headRepository?: { name?: string };
+    };
+    if (!parsed.headRefName) {
       throw new Error(`Could not determine the head branch of PR #${number}.`);
     }
-    return ref;
+    const headSlug =
+      parsed.headRepositoryOwner?.login && parsed.headRepository?.name
+        ? `${parsed.headRepositoryOwner.login}/${parsed.headRepository.name}`
+        : undefined;
+    return {
+      ref: parsed.headRefName,
+      repoSlug: headSlug ?? (await this.getRepoSlug()),
+    };
+  }
+
+  async getPRHeadRef(number: number): Promise<string> {
+    return (await this.getPRHead(number)).ref;
   }
 
   async listPullRequests(): Promise<PullRequestSections> {
