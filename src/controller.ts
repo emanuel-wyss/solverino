@@ -259,7 +259,7 @@ export class Controller {
 
   private async cleanupWorktree(item: GitHubItem): Promise<void> {
     const id = sessionId(item.kind, item.number);
-    if (this.runner.isRunning(id)) {
+    if (this.runner.isActive(id)) {
       void vscode.window.showWarningMessage(
         "Solverino: stop the agent before cleaning up the worktree."
       );
@@ -328,6 +328,12 @@ export class Controller {
       .split(/\s+/)
       .filter(Boolean);
     const hasPriorTurn = updated.history.some((m) => m.role === "agent");
+    if (this.runner.isActive(id)) {
+      void vscode.window.showInformationMessage(
+        `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
+      );
+      return;
+    }
     this.store.appendMessage(id, {
       role: "user",
       text: prompt,
@@ -347,7 +353,15 @@ export class Controller {
         cwd: updated.worktreePath!,
         sessionId: id,
       })
-      .catch((e) => this.handleError(id, e, this.panels.get(id)));
+      .catch((e) => {
+        if (e instanceof Error && /already running or queued/.test(e.message)) {
+          void vscode.window.showInformationMessage(
+            `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
+          );
+          return;
+        }
+        this.handleError(id, e, this.panels.get(id));
+      });
   }
 
   private stopAgent(id: string): void {
