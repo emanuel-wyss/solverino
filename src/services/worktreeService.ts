@@ -201,10 +201,11 @@ export class WorktreeService {
   }
 
   private async branchExists(branch: string): Promise<boolean> {
-    const result = await runOk("git", ["rev-parse", "--verify", branch], {
-      cwd: this.repoPath,
-      logger: this.logger,
-    }).catch(() => undefined);
+    const result = await runOk(
+      "git",
+      ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { cwd: this.repoPath, logger: this.logger }
+    ).catch(() => undefined);
     return result !== undefined;
   }
 
