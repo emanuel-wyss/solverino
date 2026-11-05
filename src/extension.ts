@@ -5,24 +5,40 @@ export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel("Solverino");
   context.subscriptions.push(outputChannel);
 
-  let controller: Controller;
-  try {
-    controller = new Controller(context);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    outputChannel.appendLine(`[error] ${message}`);
-    void vscode.window.showErrorMessage(`Solverino: ${message}`);
-    return;
-  }
-  context.subscriptions.push(controller);
-  controller.activate();
+  let activated = false;
 
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider(
-      "solverino.overview",
-      controller.overviewProvider
-    )
-  );
+  const tryActivate = (): void => {
+    if (activated || !vscode.workspace.workspaceFolders?.length) {
+      return;
+    }
+    try {
+      const controller = new Controller(context);
+      activated = true;
+      context.subscriptions.push(controller);
+      controller.activate();
+      context.subscriptions.push(
+        vscode.window.registerTreeDataProvider(
+          "solverino.overview",
+          controller.overviewProvider
+        )
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      outputChannel.appendLine(`[error] ${message}`);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
+    }
+  };
+
+  if (vscode.workspace.workspaceFolders?.length) {
+    tryActivate();
+  } else {
+    outputChannel.appendLine(
+      "[info] No workspace folder open yet; Solverino will activate when one is opened."
+    );
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(tryActivate)
+    );
+  }
 }
 
 export function deactivate(): void {
