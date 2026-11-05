@@ -2,6 +2,7 @@ import * as assert from "assert";
 import {
   bodyExcerpt,
   deriveCheckState,
+  escapeMarkdown,
   itemLabelText,
   itemStatusText,
   relativeTime,
@@ -152,5 +153,20 @@ describe("bodyExcerpt", () => {
     const excerpt = bodyExcerpt(long, 200);
     assert.strictEqual(excerpt.length, 201);
     assert.ok(excerpt.endsWith("…"));
+  });
+});
+
+describe("escapeMarkdown", () => {
+  it("escapes markdown-significant characters", () => {
+    assert.strictEqual(escapeMarkdown("a `code` *b*"), "a \\`code\\` \\*b\\*");
+    assert.strictEqual(escapeMarkdown("[link](url)"), "\\[link\\]\\(url\\)");
+    assert.strictEqual(escapeMarkdown("plain text"), "plain text");
+  });
+
+  it("keeps a truncated fenced code block from swallowing the rest of a tooltip", () => {
+    const fenced = "```\n" + "x".repeat(300);
+    const escaped = escapeMarkdown(bodyExcerpt(fenced));
+    assert.ok(!escaped.includes("```"));
+    assert.ok(escaped.includes("\\`"));
   });
 });

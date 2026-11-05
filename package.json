@@ -166,7 +166,13 @@
     "viewsWelcome": [
       {
         "view": "solverino.overview",
+        "when": "config.solverino.showAllOpenIssues == false",
         "contents": "No open issues or PRs match your filters.\n[Refresh](command:solverino.refresh)\nTo see all open issues instead of only yours, enable [Show All Open Issues](command:solverino.showAllOpenIssues)."
+      },
+      {
+        "view": "solverino.overview",
+        "when": "config.solverino.showAllOpenIssues",
+        "contents": "No open issues or PRs match your filters.\n[Refresh](command:solverino.refresh)\n[Show All Open Issues](command:solverino.showAllOpenIssues) is enabled — toggle it to show only the issues assigned to you."
       }
     ]
   },

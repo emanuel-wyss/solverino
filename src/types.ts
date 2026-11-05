@@ -167,6 +167,10 @@ export function relativeTime(iso: string, now = Date.now()): string {
   return `${months}mo ago`;
 }
 
+export function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}[\]()#+.!|>-])/g, "\\$1");
+}
+
 export function bodyExcerpt(body: string, maxLength = 200): string {
   const text = body.replace(/\r\n/g, "\n").trim();
   if (text.length <= maxLength) {

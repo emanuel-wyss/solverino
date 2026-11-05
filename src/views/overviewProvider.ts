@@ -3,6 +3,7 @@ import {
   GitHubItem,
   ItemKind,
   bodyExcerpt,
+  escapeMarkdown,
   itemLabelText,
   itemStatusText,
   relativeTime,
@@ -158,7 +159,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     }
     const excerpt = bodyExcerpt(item.body);
     if (excerpt) {
-      tooltip.appendMarkdown(`\n\n${excerpt}`);
+      tooltip.appendMarkdown(`\n\n${escapeMarkdown(excerpt)}`);
     }
     if (worktree) {
       tooltip.appendMarkdown(
