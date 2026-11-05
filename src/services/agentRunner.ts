@@ -80,10 +80,10 @@ export class AgentRunner {
     const child = this.running.get(sessionId);
     if (child) {
       this.stopped.add(sessionId);
-      child.kill("SIGTERM");
+      this.killTree(child, "SIGTERM");
       const timer = setTimeout(() => {
         if (this.running.get(sessionId) === child) {
-          child.kill("SIGKILL");
+          this.killTree(child, "SIGKILL");
         }
       }, 3000);
       timer.unref();
@@ -112,6 +112,35 @@ export class AgentRunner {
     }
   }
 
+  private killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (!child.pid) {
+      return;
+    }
+    if (process.platform === "win32") {
+      const { spawn } = require("child_process") as typeof import("child_process");
+      if (signal === "SIGTERM") {
+        spawn("taskkill", ["/PID", String(child.pid), "/T"], {
+          stdio: "ignore",
+        });
+      } else {
+        spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+      }
+      return;
+    }
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      // group already gone; fall back to the direct child
+      try {
+        child.kill(signal);
+      } catch {
+        // already exited
+      }
+    }
+  }
+
   private drain(): void {
     while (this.running.size < this.maxConcurrent && this.queue.length > 0) {
       const next = this.queue.shift();
@@ -132,6 +161,7 @@ export class AgentRunner {
       child = spawn(job.command, job.args, {
         cwd: job.cwd,
         env: process.env,
+        detached: process.platform !== "win32",
       });
     } catch (e) {
       queued.reject(
