@@ -16,6 +16,8 @@ export interface GitHubItem {
   state: string;
   author: string;
   updatedAt: string;
+  assignees?: string[];
+  reviewRequests?: string[];
 }
 
 export interface ChatMessage {

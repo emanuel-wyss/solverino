@@ -6,7 +6,8 @@ export type ChatPanelAction =
   | { type: "stop" }
   | { type: "commit" }
   | { type: "pushAndCreatePR" }
-  | { type: "openWorktree" };
+  | { type: "openWorktree" }
+  | { type: "reportError" };
 
 interface PanelState {
   status: SessionStatus;
@@ -153,6 +154,7 @@ export class ChatPanel {
   <button id="commit" ${s.hasWorktree && s.status !== "working" ? "" : "disabled"}>Commit</button>
   <button id="push" ${s.hasWorktree && s.status !== "working" ? "" : "disabled"}>Push &amp; Create PR</button>
   <button id="openwt" ${s.hasWorktree ? "" : "disabled"}>Open Worktree</button>
+  <button id="reporterror" ${s.status === "error" ? "" : "disabled"}>Report Error</button>
 </footer>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -185,6 +187,7 @@ document.getElementById('stop').addEventListener('click', () => vscode.postMessa
 document.getElementById('commit').addEventListener('click', () => vscode.postMessage({ type: 'commit' }));
 document.getElementById('push').addEventListener('click', () => vscode.postMessage({ type: 'pushAndCreatePR' }));
 document.getElementById('openwt').addEventListener('click', () => vscode.postMessage({ type: 'openWorktree' }));
+document.getElementById('reporterror').addEventListener('click', () => vscode.postMessage({ type: 'reportError' }));
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -234,6 +237,7 @@ window.addEventListener('message', (e) => {
     document.getElementById('commit').disabled = wtDisabled || working;
     document.getElementById('push').disabled = wtDisabled || working;
     document.getElementById('openwt').disabled = wtDisabled;
+    document.getElementById('reporterror').disabled = s.status !== 'error';
   }
 });
 </script>
