@@ -2,7 +2,7 @@
   "name": "solverino",
   "displayName": "Solverino — Issue & PR Worktrees",
   "description": "One-click git worktrees for your GitHub Issues & Pull Requests — see which ones already have a worktree and clean them up when done.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "emanuel-wyss",
   "license": "MIT",
   "engines": {
