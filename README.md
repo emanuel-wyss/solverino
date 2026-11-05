@@ -15,6 +15,10 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 - **Create Draft PR** *(issues)*: closes the loop from issue to PR — ensures the worktree, commits any uncommitted changes, pushes the branch and opens a draft PR titled `#<number>: <title>` with a `Closes #<number>` body, then opens it on GitHub.
 - **Orphaned Worktrees section**: worktrees whose issue or PR is no longer open are listed with their own cleanup action, so stale checkouts never pile up.
 - **My Week**: a quick-pick summary of the PRs you merged and issues you closed in the last 7 days, each opening on GitHub.
+- **At-a-glance status**: PR items show draft state, CI check results (passing/failing/running with a colored icon), review decisions and uncommitted-file counts; issues show their labels. Tooltips include author, last activity, label list and a body excerpt.
+- **Status bar counter**: a status bar item shows how many PRs, review requests and issues are open — click it to jump to any of them.
+- **Helpful empty state**: when nothing is open, the tree shows a welcome view with a refresh action instead of a blank panel.
+- **Cleanup Worktree**: removes a worktree and its branch, with an explicit confirmation that warns about uncommitted files and locally-only commits before anything is deleted.
 
 ## Requirements
 
@@ -33,6 +37,8 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 | Command | Description |
 | --- | --- |
 | `Solverino: Refresh Issues & PRs` | Re-fetch issues and PRs from GitHub |
+| `Solverino: Go to Issue/PR…` | Fuzzy-search all listed items and pick an action (worktree, GitHub, Codespace, agent, cleanup) |
+| `Solverino: Toggle Show All Open Issues` | Flip the `showAllOpenIssues` setting |
 | `Solverino: Open Worktree` | Create (or reuse) the worktree and open/focus its VS Code window |
 | `Solverino: Cleanup Worktree` | Remove the worktree and its branch |
 | `Solverino: Open on GitHub` | Open the issue/PR on github.com |

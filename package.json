@@ -70,6 +70,16 @@
         "category": "Solverino"
       },
       {
+        "command": "solverino.goto",
+        "title": "Go to Issue/PR…",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.showAllOpenIssues",
+        "title": "Toggle Show All Open Issues",
+        "category": "Solverino"
+      },
+      {
         "command": "solverino.openWorktree",
         "title": "Open Worktree",
         "icon": "$(folder-opened)",
@@ -129,6 +139,11 @@
           "command": "solverino.refresh",
           "when": "view == solverino.overview",
           "group": "navigation"
+        },
+        {
+          "command": "solverino.goto",
+          "when": "view == solverino.overview",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -185,7 +200,19 @@
           "group": "inline@1"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "solverino.overview",
+        "when": "config.solverino.showAllOpenIssues == false",
+        "contents": "No open issues or PRs match your filters.\n[Refresh](command:solverino.refresh)\nTo see all open issues instead of only yours, enable [Show All Open Issues](command:solverino.showAllOpenIssues)."
+      },
+      {
+        "view": "solverino.overview",
+        "when": "config.solverino.showAllOpenIssues",
+        "contents": "No open issues or PRs match your filters.\n[Refresh](command:solverino.refresh)\n[Show All Open Issues](command:solverino.showAllOpenIssues) is enabled — toggle it to show only the issues assigned to you."
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

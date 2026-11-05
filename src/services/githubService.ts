@@ -1,9 +1,15 @@
 import { runOk, Logger } from "../util";
-import { GitHubItem, ItemKind } from "../types";
+import {
+  GitHubItem,
+  ItemKind,
+  deriveCheckState,
+  StatusContextEntry,
+  CheckRunEntry,
+} from "../types";
 
-const ISSUE_FIELDS = "number,title,body,url,state,author,updatedAt";
+const ISSUE_FIELDS = "number,title,body,url,state,author,updatedAt,labels";
 const PR_FIELDS =
-  "number,title,body,url,state,author,updatedAt,assignees,reviewRequests";
+  "number,title,body,url,state,author,updatedAt,assignees,reviewRequests,labels,isDraft,reviewDecision,statusCheckRollup";
 const MAX_ITEMS = 1000;
 
 interface GhRawItem {
@@ -16,6 +22,10 @@ interface GhRawItem {
   updatedAt: string;
   assignees?: { login: string }[] | null;
   reviewRequests?: { login: string }[] | null;
+  labels?: { name: string }[] | null;
+  isDraft?: boolean | null;
+  reviewDecision?: string | null;
+  statusCheckRollup?: (StatusContextEntry | CheckRunEntry)[] | null;
 }
 
 function toItems(raw: GhRawItem[], kind: ItemKind): GitHubItem[] {
@@ -32,6 +42,14 @@ function toItems(raw: GhRawItem[], kind: ItemKind): GitHubItem[] {
       ? {
           assignees: (i.assignees ?? []).map((a) => a.login),
           reviewRequests: (i.reviewRequests ?? []).map((r) => r.login),
+        }
+      : {}),
+    labels: (i.labels ?? []).map((l) => l.name),
+    ...(kind === "pr"
+      ? {
+          isDraft: i.isDraft ?? false,
+          reviewDecision: i.reviewDecision ?? undefined,
+          checkState: deriveCheckState(i.statusCheckRollup),
         }
       : {}),
   }));

@@ -247,6 +247,23 @@ describe("WorktreeService", () => {
     );
   });
 
+  it("dirtyFileCount counts tracked and untracked changes individually", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.dirtyFileCount(info.path), 0);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "changed\n");
+    fs.mkdirSync(path.join(info.path, "new-dir", "nested"), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(info.path, "new-dir", "one.txt"), "1\n");
+    fs.writeFileSync(path.join(info.path, "new-dir", "two.txt"), "2\n");
+    fs.writeFileSync(
+      path.join(info.path, "new-dir", "nested", "three.txt"),
+      "3\n"
+    );
+    assert.strictEqual(await svc.dirtyFileCount(info.path), 4);
+  });
+
   it("refuses to create a PR worktree when the PR head cannot be fetched", async () => {
     const base = path.dirname(repo);
     const remote = path.join(base, "remote.git");
