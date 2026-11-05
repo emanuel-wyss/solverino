@@ -3,11 +3,10 @@ import { AgentRunner, buildAgentArgs, buildDefaultPrompt } from "./services/agen
 import { GitHubService, isAuthOrMissingCliError } from "./services/githubService";
 import { WorktreeService } from "./services/worktreeService";
 import { SessionStore } from "./state";
-import { OverviewProvider } from "./views/overviewProvider";
+import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { ChatPanel, ChatPanelAction } from "./views/chatPanel";
 import { Logger } from "./util";
 import { ChatSession, GitHubItem, sessionId } from "./types";
-import { OverviewNode } from "./views/overviewProvider";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -59,13 +58,13 @@ export class Controller {
     if (!arg) {
       return undefined;
     }
-    const node = arg as OverviewNode;
-    if (node.item) {
-      return node.item;
-    }
-    const item = arg as GitHubItem;
-    if (typeof item.kind === "string" && typeof item.number === "number") {
-      return item;
+    const candidate = ((arg as OverviewNode).item ?? arg) as GitHubItem;
+    if (
+      (candidate.kind === "issue" || candidate.kind === "pr") &&
+      Number.isInteger(candidate.number) &&
+      candidate.number > 0
+    ) {
+      return candidate;
     }
     return undefined;
   }
@@ -242,10 +241,7 @@ export class Controller {
     item: GitHubItem,
     panel?: ChatPanel
   ): Promise<void> {
-    const session = this.store.get(sessionId(item.kind, item.number));
-    if (!session) {
-      return;
-    }
+    const session = this.store.getOrCreate(item);
     try {
       const info = await this.worktrees.ensure(item.kind, item.number);
       this.store.update(session.id, {
@@ -333,10 +329,17 @@ export class Controller {
       .filter(Boolean);
     const hasPriorTurn = updated.history.some((m) => m.role === "agent");
     this.store.appendMessage(id, {
+      role: "user",
+      text: prompt,
+      timestamp: Date.now(),
+    });
+    this.store.appendMessage(id, {
       role: "system",
       text: "Agent started.",
       timestamp: Date.now(),
     });
+    const withUserMessage = this.store.get(id)!;
+    this.refreshPanel(withUserMessage);
     this.runner
       .run({
         command,
