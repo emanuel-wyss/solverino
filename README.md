@@ -9,7 +9,7 @@ A VS Code extension that shows every open/assigned Issue and Pull Request of you
 - **Worktree isolation**: each chat maps 1:1 to its own `git worktree` (`solverino-<repo>-issue-42`) and branch (`issue-42`). Agents work in parallel without stepping on each other.
 - **Agent engine**: runs any CLI agent (default: GitHub Copilot CLI, `copilot -p "<prompt>"`) with `cwd` set to the chat's worktree. Session resume on follow-up turns.
 - **Concurrency cap + queue**: at most N agents run at once (default 4); the rest wait in a queue.
-- **Approval gate**: nothing is committed or pushed automatically. **Commit**, **Push & Create PR**, and **Cleanup worktree** are explicit user actions.
+- **Approval gate**: nothing is committed or pushed automatically. **Commit**, **Push & Create PR**, and **Cleanup worktree** are explicit user actions, each with an informed confirmation: commit shows the file list (and warns about likely secrets), push shows the branch, target base, and commit count, cleanup warns about uncommitted files and locally-only commits.
 - **One-click PR workflow**: review → commit → push → `gh pr create`, straight from the chat panel.
 
 ## Requirements
@@ -70,6 +70,7 @@ Every push to `main` automatically builds and publishes a `.vsix` to the repo's 
 - VS Code has no public API to drive built-in Copilot chat sessions, so Solverino runs its own agent processes and renders them in its own chat UI. A Copilot Chat participant (`@solverino`) plus Language Model Tools is planned for v2.
 - One repository per window (multi-repo support is a v2 goal).
 - No autonomous push/merge: every destructive action requires an explicit click.
+- The agent CLI runs with your shell and credentials. The prompt instructs it not to commit or push, but this cannot be technically enforced — review the branch's remote state before pushing, and prefer read-only credentials for agent runs.
 
 ## License
 
