@@ -8,7 +8,8 @@ import {
 import { WorktreeService } from "./services/worktreeService";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { Logger } from "./util";
-import { GitHubItem, branchName } from "./types";
+import { GitHubItem, branchName, parseWorktreeFolderName } from "./types";
+import { ActivityItem } from "./services/githubService";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -172,6 +173,7 @@ export class Controller {
       ]);
       this.tree.setItems(issues, prs.mine, prs.reviewRequested);
       await this.scanWorktrees();
+      this.updateOrphans(issues, prs.mine, prs.reviewRequested);
     } catch (e) {
       const msg = isAuthOrMissingCliError(e) ?? String(e);
       this.logger.error(msg);
@@ -180,6 +182,164 @@ export class Controller {
     } finally {
       this.tree.setLoading(false);
       this.tree.refresh();
+    }
+  }
+
+  private updateOrphans(
+    issues: GitHubItem[],
+    prs: GitHubItem[],
+    reviewPrs: GitHubItem[]
+  ): void {
+    const repoName = this.repoName();
+    const openKeys = new Set<string>();
+    for (const item of [...issues, ...prs, ...reviewPrs]) {
+      openKeys.add(`${item.kind}:${item.number}`);
+    }
+    const orphans: { branch: string; path: string }[] = [];
+    for (const [wtPath] of this.worktreesByPath) {
+      const folder = wtPath.replace(/.*[\\/]/, "");
+      const parsed = parseWorktreeFolderName(folder);
+      if (parsed && parsed.repoName === repoName) {
+        if (!openKeys.has(`${parsed.kind}:${parsed.number}`)) {
+          const branch = this.worktreesByPath.get(wtPath);
+          if (branch) {
+            orphans.push({ branch, path: wtPath });
+          }
+        }
+      }
+    }
+    this.tree.setOrphans(orphans);
+  }
+
+  private repoName(): string {
+    return (
+      this.repoPath.replace(/.*[\\/]/, "").replace(/\.git$/, "") || "repo"
+    );
+  }
+
+  private async myWeek(): Promise<void> {
+    try {
+      const [mergedPrs, closedIssues] = await Promise.all([
+        this.github.listRecentlyMergedPRs(7),
+        this.github.listRecentlyClosedIssues(7),
+      ]);
+      const entries: ActivityItem[] = [...mergedPrs, ...closedIssues];
+      if (entries.length === 0) {
+        void vscode.window.showInformationMessage(
+          "Solverino: nothing merged or closed by you in the last 7 days."
+        );
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        entries.map((entry) => ({
+          label: `#${entry.number} ${entry.title}`,
+          description:
+            entry.kind === "pr"
+              ? `PR merged ${new Date(entry.closedAt).toLocaleDateString()}`
+              : `Issue closed ${new Date(entry.closedAt).toLocaleDateString()}`,
+          entry,
+        })),
+        {
+          placeHolder: `Last 7 days: ${mergedPrs.length} PR(s) merged, ${closedIssues.length} issue(s) closed. Pick one to open on GitHub…`,
+        }
+      );
+      if (picked) {
+        await vscode.env.openExternal(vscode.Uri.parse(picked.entry.url));
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
+    }
+  }
+
+  private async createDraftPR(item: GitHubItem): Promise<void> {
+    try {
+      if (item.kind !== "issue") {
+        void vscode.window.showErrorMessage(
+          "Solverino: draft PRs can only be created for issues."
+        );
+        return;
+      }
+      const branch = branchName(item.kind, item.number);
+      const info = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Solverino: preparing draft PR for issue #${item.number}…`,
+          cancellable: false,
+        },
+        async () => {
+          const wt = await this.worktrees.ensure(item.kind, item.number);
+          const committed = await this.worktrees.commitAll(
+            wt.path,
+            `#${item.number}: ${item.title}`
+          );
+          await this.worktrees.pushBranch(branch);
+          return { wt, committed };
+        }
+      );
+      this.worktreesByPath.set(info.wt.path, info.wt.branch);
+      this.tree.refresh();
+      const prUrl = await this.github.createDraftPR(
+        branch,
+        `#${item.number}: ${item.title}`,
+        `Closes #${item.number}\n\n${item.body}`
+      );
+      await vscode.env.openExternal(vscode.Uri.parse(prUrl));
+      void vscode.window.showInformationMessage(
+        `Solverino: draft PR created${info.committed ? " (uncommitted changes were committed)" : ""} — ${prUrl}`
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
+    }
+  }
+
+  private async cleanupOrphan(arg: unknown): Promise<void> {
+    const orphan = (arg as { orphan?: { path: string; branch: string } })
+      ?.orphan;
+    if (!orphan?.path || !orphan?.branch) {
+      return;
+    }
+    const warnings: string[] = [];
+    try {
+      const status = await this.worktrees.statusFiles(orphan.path);
+      if (status.files.length > 0) {
+        warnings.push(
+          `${status.files.length} uncommitted file(s) will be permanently lost`
+        );
+      }
+    } catch {
+      // worktree may already be gone; cleanup proceeds
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Remove the orphaned worktree on branch "${orphan.branch}"?`,
+      {
+        modal: true,
+        detail:
+          warnings.length > 0
+            ? `${orphan.path}\n\nWarning: ${warnings.join("; ")}.`
+            : orphan.path,
+      },
+      "Remove"
+    );
+    if (confirm !== "Remove") {
+      return;
+    }
+    try {
+      await this.worktrees.removeEntry(orphan.path, orphan.branch);
+      this.worktreesByPath.delete(orphan.path);
+      this.tree.setOrphans(
+        this.tree
+          .currentOrphans()
+          .filter((o) => o.path !== orphan.path)
+      );
+      this.tree.refresh();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(`Solverino: ${message}`);
     }
   }
 
@@ -221,6 +381,16 @@ export class Controller {
         void this.openCopilotAgent(item);
       }
     });
+    reg("solverino.createDraftPR", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.createDraftPR(item);
+      }
+    });
+    reg("solverino.cleanupOrphan", (arg) => {
+      void this.cleanupOrphan(arg);
+    });
+    reg("solverino.myWeek", () => this.myWeek());
   }
 
   private static toVscodeFileUri(fsPath: string): vscode.Uri {
@@ -477,6 +647,13 @@ export class Controller {
       }
     } catch {
       // worktree may already be gone; cleanup proceeds
+    }
+    if (item.kind === "pr" && item.state.toUpperCase() === "OPEN") {
+      warnings.push(
+        "PR #" +
+          item.number +
+          " is still open on GitHub — this removes only the local worktree and branch, not the PR"
+      );
     }
     const confirm = await vscode.window.showWarningMessage(
       `Remove the worktree and branch for ${item.kind} #${item.number}?`,

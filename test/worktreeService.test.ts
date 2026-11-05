@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { WorktreeService } from "../src/services/worktreeService";
-import { branchName, worktreeFolderName } from "../src/types";
+import { branchName, worktreeFolderName, parseWorktreeFolderName } from "../src/types";
 import { PromiseQueue, runOk } from "../src/util";
 
 describe("naming", () => {
@@ -18,6 +18,20 @@ describe("naming", () => {
       worktreeFolderName("myrepo", "issue", 42),
       "solverino-myrepo-issue-42"
     );
+  });
+
+  it("parseWorktreeFolderName round-trips folder names with dashed repos", () => {
+    const parsed = parseWorktreeFolderName("solverino-my-repo-pr-123");
+    assert.deepStrictEqual(parsed, {
+      repoName: "my-repo",
+      kind: "pr",
+      number: 123,
+    });
+  });
+
+  it("parseWorktreeFolderName rejects foreign folders", () => {
+    assert.strictEqual(parseWorktreeFolderName("some-other-folder"), undefined);
+    assert.strictEqual(parseWorktreeFolderName("solverino-repo-issue"), undefined);
   });
 });
 
@@ -113,6 +127,25 @@ describe("WorktreeService", () => {
     await svc.ensure("issue", 42);
     const list = await svc.list();
     assert.ok(list.some((w) => w.branch === "issue-42"));
+  });
+
+  it("commitAll commits pending changes and reports no-op", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.commitAll(info.path, "nothing to do"), false);
+    fs.writeFileSync(path.join(info.path, "b.txt"), "change\n");
+    assert.strictEqual(await svc.commitAll(info.path, "#42: fix"), true);
+    const status = await svc.statusFiles(info.path);
+    assert.strictEqual(status.files.length, 0);
+  });
+
+  it("removeEntry removes an arbitrary worktree and its branch", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    await svc.removeEntry(info.path, info.branch);
+    const list = await svc.list();
+    assert.ok(!list.some((w) => w.branch === "issue-42"));
+    assert.ok(!fs.existsSync(info.path));
   });
 
   it("removes worktree and branch", async () => {

@@ -143,18 +143,21 @@ export class WorktreeService {
   }
 
   async remove(kind: ItemKind, number: number): Promise<void> {
+    const wtPath = this.expectedPath(kind, number);
+    const match = (await this.list()).find((w) => w.path === wtPath);
+    if (!match) {
+      return;
+    }
+    await this.removeEntry(wtPath, match.branch);
+  }
+
+  async removeEntry(wtPath: string, branch: string): Promise<void> {
     await this.queue.serialize(async () => {
-      const wtPath = this.expectedPath(kind, number);
-      const existing = await this.list();
-      const match = existing.find((w) => w.path === wtPath);
-      if (!match) {
-        return;
-      }
       await runOk("git", ["worktree", "remove", "--force", wtPath], {
         cwd: this.repoPath,
         logger: this.logger,
       });
-      await runOk("git", ["branch", "-D", match.branch], {
+      await runOk("git", ["branch", "-D", branch], {
         cwd: this.repoPath,
         logger: this.logger,
       }).catch(() => {});
@@ -215,6 +218,19 @@ export class WorktreeService {
       .map((l) => l.replace(/^\S+\s+/, ""))
       .map((f) => f.replace(/^"|"$/g, ""));
     return { files };
+  }
+
+  async commitAll(wtPath: string, message: string): Promise<boolean> {
+    const status = await this.statusFiles(wtPath);
+    if (status.files.length === 0) {
+      return false;
+    }
+    await runOk("git", ["add", "-A"], { cwd: wtPath, logger: this.logger });
+    await runOk("git", ["commit", "-m", message], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    return true;
   }
 
   async unpushedCommitCount(

@@ -24,3 +24,23 @@ export function worktreeFolderName(
 ): string {
   return `solverino-${repoName}-${kind}-${number}`;
 }
+
+export interface ParsedWorktreeName {
+  repoName: string;
+  kind: ItemKind;
+  number: number;
+}
+
+export function parseWorktreeFolderName(
+  folderName: string
+): ParsedWorktreeName | undefined {
+  const match = /^solverino-(.+)-(issue|pr)-(\d+)$/.exec(folderName);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    repoName: match[1],
+    kind: match[2] as ItemKind,
+    number: parseInt(match[3], 10),
+  };
+}

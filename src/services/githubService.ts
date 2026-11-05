@@ -194,6 +194,65 @@ export class GitHubService {
     return (await this.getPRHead(number)).ref;
   }
 
+  async createDraftPR(
+    branch: string,
+    title: string,
+    body: string
+  ): Promise<string> {
+    const url = await this.gh([
+      "pr",
+      "create",
+      "--draft",
+      "--head",
+      branch,
+      "--title",
+      title,
+      "--body",
+      body,
+    ]);
+    return url.trim();
+  }
+
+  async listRecentlyMergedPRs(days = 7): Promise<ActivityItem[]> {
+    const slug = await this.getRepoSlug();
+    const raw = JSON.parse(
+      await this.gh([
+        "search",
+        "prs",
+        `merged:>=${isoDateDaysAgo(days)}`,
+        "--repo",
+        slug,
+        "--author",
+        "@me",
+        "--limit",
+        "30",
+        "--json",
+        "number,title,url,closedAt",
+      ])
+    ) as { number: number; title: string; url: string; closedAt: string }[];
+    return raw.map((i) => ({ kind: "pr", ...i }));
+  }
+
+  async listRecentlyClosedIssues(days = 7): Promise<ActivityItem[]> {
+    const slug = await this.getRepoSlug();
+    const raw = JSON.parse(
+      await this.gh([
+        "search",
+        "issues",
+        `closed:>=${isoDateDaysAgo(days)}`,
+        "--repo",
+        slug,
+        "--assignee",
+        "@me",
+        "--limit",
+        "30",
+        "--json",
+        "number,title,url,closedAt",
+      ])
+    ) as { number: number; title: string; url: string; closedAt: string }[];
+    return raw.map((i) => ({ kind: "issue", ...i }));
+  }
+
   async listPullRequests(): Promise<PullRequestSections> {
     const raw = JSON.parse(
       await this.gh([
@@ -210,6 +269,19 @@ export class GitHubService {
     const items = toItems(raw, "pr");
     return classifyPullRequests(items, await this.getCurrentUser());
   }
+}
+
+export interface ActivityItem {
+  kind: ItemKind;
+  number: number;
+  title: string;
+  url: string;
+  closedAt: string;
+}
+
+export function isoDateDaysAgo(days: number, now = new Date()): string {
+  const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
 }
 
 export function isAuthOrMissingCliError(e: unknown): string | undefined {
