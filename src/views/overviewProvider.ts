@@ -69,13 +69,6 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
 
   getChildren(element?: OverviewNode): OverviewNode[] {
     if (!element) {
-      if (this.loading) {
-        return [
-          new OverviewNode("Loading\u2026", "loading", {
-            icon: "loading~spin",
-          }),
-        ];
-      }
       const nodes: OverviewNode[] = [];
       if (this.prs.length > 0) {
         nodes.push(
@@ -103,6 +96,13 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
             description: String(this.issues.length),
           })
         );
+      }
+      if (nodes.length === 0 && this.loading) {
+        return [
+          new OverviewNode("Loading…", "loading", {
+            icon: "loading~spin",
+          }),
+        ];
       }
       return nodes;
     }

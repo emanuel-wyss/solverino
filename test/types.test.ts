@@ -69,6 +69,10 @@ describe("deriveCheckState", () => {
       deriveCheckState([{ status: "completed", conclusion: "timed_out" }]),
       "failure"
     );
+    assert.strictEqual(
+      deriveCheckState([{ status: "completed", conclusion: "startup_failure" }]),
+      "failure"
+    );
   });
 
   it("mixes StatusContext and CheckRun entries", () => {

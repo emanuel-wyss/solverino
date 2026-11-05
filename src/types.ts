@@ -56,9 +56,13 @@ export function normalizeCheckState(
     }
     const conclusion = (entry.conclusion ?? "").toUpperCase();
     if (
-      ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(
-        conclusion
-      )
+      [
+        "FAILURE",
+        "TIMED_OUT",
+        "STARTUP_FAILURE",
+        "CANCELLED",
+        "ACTION_REQUIRED",
+      ].includes(conclusion)
     ) {
       return "FAILURE";
     }

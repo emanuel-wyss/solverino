@@ -153,17 +153,27 @@ export class Controller {
   private async scanWorktrees(): Promise<void> {
     const list = await this.worktrees.list();
     this.worktreesByPath = new Map(list.map((w) => [w.path, w.branch]));
-    this.dirtyFilesByPath = new Map();
-    await Promise.all(
-      list.map(async (w) => {
-        try {
-          const dirty = await this.worktrees.dirtyFileCount(w.path);
-          this.dirtyFilesByPath.set(w.path, dirty);
-        } catch {
-          this.dirtyFilesByPath.set(w.path, 0);
-        }
-      })
+    const overviewPaths = new Set(
+      this.tree
+        .allItems()
+        .map((item) => this.worktrees.expectedPath(item.kind, item.number))
     );
+    const dirtyFilesByPath = new Map<string, number>();
+    await Promise.all(
+      list
+        .filter((w) => overviewPaths.has(w.path))
+        .map(async (w) => {
+          try {
+            dirtyFilesByPath.set(
+              w.path,
+              await this.worktrees.dirtyFileCount(w.path)
+            );
+          } catch {
+            dirtyFilesByPath.set(w.path, 0);
+          }
+        })
+    );
+    this.dirtyFilesByPath = dirtyFilesByPath;
     this.tree.refresh();
   }
 
@@ -571,8 +581,8 @@ export class Controller {
         () => this.worktrees.ensure(item.kind, item.number, prHeadBranch)
       );
       this.worktreesByPath.set(info.path, info.branch);
-      await this.scanWorktrees();
       this.openFolderWindow(info.path);
+      void this.scanWorktrees();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);
