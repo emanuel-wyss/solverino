@@ -42,6 +42,12 @@ export interface PullRequestSections {
   reviewRequested: GitHubItem[];
 }
 
+export function codespaceNewUrl(repoSlug: string, ref: string): string {
+  return `https://github.com/codespaces/new?repo=${encodeURIComponent(
+    repoSlug
+  )}&ref=${encodeURIComponent(ref)}`;
+}
+
 export function classifyPullRequests(
   prs: GitHubItem[],
   currentUser?: string
@@ -63,6 +69,8 @@ export function classifyPullRequests(
 
 export class GitHubService {
   private currentUser: string | undefined;
+  private repoSlug: string | undefined;
+  private defaultBranch: string | undefined;
 
   constructor(
     private readonly repoPath: string,
@@ -111,6 +119,46 @@ export class GitHubService {
       this.currentUser = undefined;
     }
     return this.currentUser;
+  }
+
+  async getRepoSlug(): Promise<string> {
+    if (this.repoSlug === undefined) {
+      const slug = (
+        await this.gh([
+          "repo",
+          "view",
+          "--json",
+          "nameWithOwner",
+          "--jq",
+          ".nameWithOwner",
+        ])
+      ).trim();
+      this.repoSlug = slug || undefined;
+    }
+    if (!this.repoSlug) {
+      throw new Error("Could not determine the GitHub repository.");
+    }
+    return this.repoSlug;
+  }
+
+  async getDefaultBranch(): Promise<string> {
+    if (this.defaultBranch === undefined) {
+      const branch = (
+        await this.gh([
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
+        ])
+      ).trim();
+      this.defaultBranch = branch || undefined;
+    }
+    if (!this.defaultBranch) {
+      throw new Error("Could not determine the default branch of the repository.");
+    }
+    return this.defaultBranch;
   }
 
   async getPRHeadRef(number: number): Promise<string> {

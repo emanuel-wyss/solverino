@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { classifyPullRequests } from "../src/services/githubService";
+import { classifyPullRequests, codespaceNewUrl } from "../src/services/githubService";
 
 describe("classifyPullRequests", () => {
   const me = "me";
@@ -35,5 +35,21 @@ describe("classifyPullRequests", () => {
     const sections = classifyPullRequests([{ ...other, number: 5 }], undefined);
     assert.deepStrictEqual(sections.mine.map((p) => p.number), [5]);
     assert.deepStrictEqual(sections.reviewRequested, []);
+  });
+});
+
+describe("codespaceNewUrl", () => {
+  it("builds the codespace creation URL for a repo and branch", () => {
+    assert.strictEqual(
+      codespaceNewUrl("owner/repo", "issue-42"),
+      "https://github.com/codespaces/new?repo=owner%2Frepo&ref=issue-42"
+    );
+  });
+
+  it("encodes refs with slashes", () => {
+    assert.strictEqual(
+      codespaceNewUrl("owner/repo", "feature/branch"),
+      "https://github.com/codespaces/new?repo=owner%2Frepo&ref=feature%2Fbranch"
+    );
   });
 });

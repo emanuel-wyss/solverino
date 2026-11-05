@@ -86,6 +86,18 @@
         "title": "Open on GitHub",
         "icon": "$(globe)",
         "category": "Solverino"
+      },
+      {
+        "command": "solverino.openInCodespace",
+        "title": "Open in Codespace",
+        "icon": "$(cloud)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.openCopilotAgent",
+        "title": "Open Copilot Agent",
+        "icon": "$(sparkle)",
+        "category": "Solverino"
       }
     ],
     "menus": {
@@ -111,6 +123,16 @@
           "command": "solverino.openOnGitHub",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
           "group": "github"
+        },
+        {
+          "command": "solverino.openInCodespace",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "github"
+        },
+        {
+          "command": "solverino.openCopilotAgent",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "worktree"
         }
       ],
       "view/item/inline": [
