@@ -106,7 +106,8 @@ export class WorktreeService {
           number
         );
       const existing = await this.list();
-      if (!existing.some((w) => w.path === wtPath)) {
+      const match = existing.find((w) => w.path === wtPath);
+      if (!match) {
         if (wtPathOverride) {
           throw new Error(`No worktree registered at ${wtPath}.`);
         }
@@ -117,7 +118,7 @@ export class WorktreeService {
         logger: this.logger,
       });
       if (deleteBranch) {
-        await runOk("git", ["branch", "-D", branchName(kind, number)], {
+        await runOk("git", ["branch", "-D", match.branch], {
           cwd: this.repoPath,
           logger: this.logger,
         }).catch(() => {});
