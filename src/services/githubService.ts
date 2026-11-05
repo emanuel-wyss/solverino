@@ -231,6 +231,21 @@ export class GitHubService {
     return url.trim();
   }
 
+  async getPRHeadSha(number: number): Promise<string | undefined> {
+    try {
+      const out = await this.gh([
+        "pr",
+        "view",
+        String(number),
+        "--json",
+        "headRefOid",
+      ]);
+      return (JSON.parse(out) as { headRefOid?: string }).headRefOid;
+    } catch {
+      return undefined;
+    }
+  }
+
   async getItemState(kind: ItemKind, number: number): Promise<string | undefined> {
     try {
       const out = await this.gh([

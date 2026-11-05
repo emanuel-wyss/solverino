@@ -216,6 +216,20 @@ export class WorktreeService {
     }
   }
 
+  async headCommit(wtPath: string): Promise<string | undefined> {
+    try {
+      const result = await run("git", ["rev-parse", "HEAD"], {
+        cwd: wtPath,
+        logger: this.logger,
+      });
+      return result.code === 0 && result.stdout.trim()
+        ? result.stdout.trim()
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async dirtyFileCount(wtPath: string): Promise<number> {
     const result = await run(
       "git",
