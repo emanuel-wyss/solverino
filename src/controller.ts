@@ -197,6 +197,29 @@ export class Controller {
     });
   }
 
+  private static toVscodeFileUri(fsPath: string): vscode.Uri {
+    const sep = fsPath.includes("\\") ? "\\" : "/";
+    const encoded = fsPath
+      .split(sep)
+      .filter(Boolean)
+      .map(encodeURIComponent)
+      .join("/");
+    return vscode.Uri.parse(`vscode://file/${encoded}`);
+  }
+
+  private openFolderWindow(fsPath: string): void {
+    const opened = vscode.env.openExternal(
+      Controller.toVscodeFileUri(fsPath)
+    );
+    if (!opened) {
+      void vscode.commands.executeCommand(
+        "vscode.openFolder",
+        vscode.Uri.file(fsPath),
+        { forceNewWindow: true }
+      );
+    }
+  }
+
   async openWorktree(item: GitHubItem): Promise<void> {
     try {
       let prHeadBranch: string | undefined;
@@ -210,11 +233,7 @@ export class Controller {
       );
       this.worktreesByPath.set(info.path, info.branch);
       this.tree.refresh();
-      void vscode.commands.executeCommand(
-        "vscode.openFolder",
-        vscode.Uri.file(info.path),
-        { forceNewWindow: true }
-      );
+      this.openFolderWindow(info.path);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);

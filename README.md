@@ -5,7 +5,7 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 ## Features
 
 - **Issues & PRs overview**: a tree view with your PRs, PRs requesting your review, and your assigned issues (refreshed automatically).
-- **Open Worktree button**: one click per issue or PR creates a dedicated `git worktree` (`solverino-<repo>-issue-42`) on its own branch and opens it in a new VS Code window.
+- **Open Worktree button**: one click per issue or PR creates a dedicated `git worktree` (`solverino-<repo>-issue-42`) on its own branch and opens it in VS Code — if a window for that worktree is already open, it is focused instead of opening a new instance.
   - Issue worktrees branch off `HEAD` as `issue-<number>`.
   - PR worktrees fetch the PR head (`pull/<n>/head`) and check out the PR's **actual branch** so you work on exactly the code under review.
 - **Existing worktrees are highlighted**: items with a worktree show a folder icon and their branch name, so you always know what is already checked out.
@@ -28,7 +28,7 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 | Command | Description |
 | --- | --- |
 | `Solverino: Refresh Issues & PRs` | Re-fetch issues and PRs from GitHub |
-| `Solverino: Open Worktree` | Create (or reuse) the worktree and open it in a new window |
+| `Solverino: Open Worktree` | Create (or reuse) the worktree and open/focus its VS Code window |
 | `Solverino: Cleanup Worktree` | Remove the worktree and its branch |
 | `Solverino: Open on GitHub` | Open the issue/PR on github.com |
 
