@@ -1,5 +1,72 @@
 # Swarmforge — Parallel PR Agents
 
-VS Code extension that runs parallel AI coding agents — one chat and one git worktree per Issue or PR — with live progress and one-click PR actions.
+A VS Code extension that shows every open/assigned Issue and Pull Request of your current repository, gives each one its own chat, and runs an AI coding agent in a dedicated **git worktree** per chat — with a live progress overview and one-click PR actions.
 
-🚧 Under construction — see the open pull request for the initial implementation.
+## Features
+
+- **Overview tree view** (Activity Bar → Swarmforge): assigned Issues and open PRs with live status badges — idle / working / needs review / PR opened / error. Auto-refreshes on a configurable interval.
+- **Per-Issue/PR chat panels**: full chat UX with streaming agent output, message history persisted across reloads.
+- **Worktree isolation**: each chat maps 1:1 to its own `git worktree` (`swarmforge-<repo>-issue-42`) and branch (`issue-42`). Agents work in parallel without stepping on each other.
+- **Agent engine**: runs any CLI agent (default: GitHub Copilot CLI, `copilot -p "<prompt>"`) with `cwd` set to the chat's worktree. Session resume on follow-up turns.
+- **Concurrency cap + queue**: at most N agents run at once (default 4); the rest wait in a queue.
+- **Approval gate**: nothing is committed or pushed automatically. **Commit**, **Push & Create PR**, and **Cleanup worktree** are explicit user actions.
+- **One-click PR workflow**: review → commit → push → `gh pr create`, straight from the chat panel.
+
+## Requirements
+
+- Git
+- [GitHub CLI](https://cli.github.com) (`gh`), authenticated via `gh auth login`
+- An agent CLI on PATH (default: [GitHub Copilot CLI](https://cli.github.com), `copilot`)
+
+## Getting started
+
+1. Open a repository folder in VS Code.
+2. Click the Swarmforge icon in the Activity Bar.
+3. Click the chat icon on an issue or PR — Swarmforge creates the worktree and opens the chat.
+4. Send a message (or hit ▶ Start Agent) — the agent works inside the worktree.
+5. When it finishes, review the diff, then **Commit** and **Push & Create PR**.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `Swarmforge: Refresh Issues & PRs` | Re-fetch issues/PRs from GitHub |
+| `Swarmforge: Start Chat` | Create worktree + open chat for an item |
+| `Swarmforge: Start Agent` / `Stop Agent` | Run/stop the agent for a chat |
+| `Swarmforge: Commit Changes in Worktree` | Stage and commit all changes |
+| `Swarmforge: Push & Create Pull Request` | Push branch and open a PR via `gh` |
+| `Swarmforge: Cleanup Worktree` | Remove worktree + branch |
+| `Swarmforge: Open Worktree in New Window` | Open the worktree folder in a new VS Code window |
+
+## Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `swarmforge.maxConcurrentAgents` | `4` | Parallel agent processes; excess chats are queued |
+| `swarmforge.worktreeParentFolder` | *(sibling of repo)* | Parent folder for worktrees |
+| `swarmforge.agentCommand` | `copilot` | Agent executable, invoked as `<command> -p <prompt>` |
+| `swarmforge.agentResumeArgs` | `--continue` | Args appended on follow-up turns for session resume |
+| `swarmforge.envSetupCommand` | *(empty)* | Shell command run once per fresh worktree (e.g. `npm install`) |
+| `swarmforge.pollIntervalSeconds` | `60` | Overview refresh interval; `0` disables polling |
+| `swarmforge.showAllOpenIssues` | `false` | Show all open issues, not only assigned ones |
+
+## Development
+
+```bash
+npm install
+npm run compile     # esbuild bundle to out/extension.js
+npm run typecheck   # tsc --noEmit
+npm test            # mocha unit tests (worktree service, branch naming, queue, agent runner)
+```
+
+Press F5 to launch an Extension Development Host with Swarmforge loaded.
+
+## Notes & limitations
+
+- VS Code has no public API to drive built-in Copilot chat sessions, so Swarmforge runs its own agent processes and renders them in its own chat UI. A Copilot Chat participant (`@swarmforge`) plus Language Model Tools is planned for v2.
+- One repository per window (multi-repo support is a v2 goal).
+- No autonomous push/merge: every destructive action requires an explicit click.
+
+## License
+
+MIT
