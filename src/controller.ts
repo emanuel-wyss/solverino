@@ -5,7 +5,7 @@ import { WorktreeService } from "./services/worktreeService";
 import { SessionStore } from "./state";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { ChatPanel, ChatPanelAction } from "./views/chatPanel";
-import { Logger } from "./util";
+import { Logger, PromiseQueue } from "./util";
 import { ChatSession, GitHubItem, sessionId } from "./types";
 
 export class Controller {
@@ -17,6 +17,7 @@ export class Controller {
   private readonly runner: AgentRunner;
   private readonly worktrees: WorktreeService;
   private readonly panels = new Map<string, ChatPanel>();
+  private readonly locks = new Map<string, PromiseQueue>();
   private pollTimer: NodeJS.Timeout | undefined;
   private repoPath: string;
 
@@ -117,6 +118,15 @@ export class Controller {
     return vscode.workspace
       .getConfiguration("solverino")
       .get<T>(key, fallback) as T;
+  }
+
+  private withSessionLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    let lock = this.locks.get(id);
+    if (!lock) {
+      lock = new PromiseQueue();
+      this.locks.set(id, lock);
+    }
+    return lock.serialize(fn);
   }
 
   private startPolling(): void {
@@ -259,109 +269,138 @@ export class Controller {
 
   private async cleanupWorktree(item: GitHubItem): Promise<void> {
     const id = sessionId(item.kind, item.number);
-    if (this.runner.isActive(id)) {
-      void vscode.window.showWarningMessage(
-        "Solverino: stop the agent before cleaning up the worktree."
-      );
-      return;
-    }
-    const confirm = await vscode.window.showWarningMessage(
-      `Remove the worktree and branch for ${item.kind} #${item.number}?`,
-      { modal: true },
-      "Remove"
-    );
-    if (confirm !== "Remove") {
-      return;
-    }
-    try {
-      const session = this.store.get(id);
-      await this.worktrees.remove(
-        item.kind,
-        item.number,
-        session?.branchOwned === true
-      );
-      const updated = this.store.update(id, {
-        worktreePath: undefined,
-        branch: undefined,
-        branchOwned: false,
-        status: "idle",
-      });
-      if (updated) {
-        this.refreshPanel(updated);
+    await this.withSessionLock(id, async () => {
+      if (this.runner.isActive(id)) {
+        void vscode.window.showWarningMessage(
+          "Solverino: stop the agent before cleaning up the worktree."
+        );
+        return;
       }
-      this.tree.refresh();
-    } catch (e) {
-      this.handleError(id, e);
-    }
+      const session = this.store.get(id);
+      const warnings: string[] = [];
+      if (session?.worktreePath) {
+        try {
+          const status = await this.worktrees.statusFiles(
+            session.worktreePath
+          );
+          if (status.files.length > 0) {
+            warnings.push(
+              `${status.files.length} uncommitted file(s) will be permanently lost`
+            );
+          }
+        } catch {
+          // worktree may already be gone; cleanup proceeds
+        }
+        if (session.branch && session.branchOwned) {
+          const unpushed = await this.worktrees.unpushedCommitCount(
+            session.worktreePath,
+            session.branch
+          );
+          if (unpushed > 0) {
+            warnings.push(
+              `${unpushed} commit(s) on ${session.branch} exist only locally and will be deleted`
+            );
+          }
+        }
+      }
+      const detail =
+        warnings.length > 0 ? `\n\nWarning: ${warnings.join("; ")}.` : "";
+      const confirm = await vscode.window.showWarningMessage(
+        `Remove the worktree and branch for ${item.kind} #${item.number}?${detail}`,
+        { modal: true, detail: warnings.join("\n") || undefined },
+        "Remove"
+      );
+      if (confirm !== "Remove") {
+        return;
+      }
+      if (this.runner.isActive(id)) {
+        void vscode.window.showWarningMessage(
+          "Solverino: an agent started meanwhile — cleanup aborted. Stop it and retry."
+        );
+        return;
+      }
+      try {
+        await this.worktrees.remove(
+          item.kind,
+          item.number,
+          session?.branchOwned === true
+        );
+        const updated = this.store.update(id, {
+          worktreePath: undefined,
+          branch: undefined,
+          branchOwned: false,
+          status: "idle",
+        });
+        if (updated) {
+          this.refreshPanel(updated);
+        }
+        this.tree.refresh();
+      } catch (e) {
+        this.handleError(id, e);
+      }
+    });
   }
 
   async startAgent(item: GitHubItem, prompt: string): Promise<void> {
     const id = sessionId(item.kind, item.number);
-    let session = this.store.get(id);
-    if (!session) {
-      session = this.store.getOrCreate(item);
-    }
-    if (this.runner.isActive(id)) {
-      void vscode.window.showInformationMessage(
-        `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
-      );
-      return;
-    }
-    if (!session.worktreePath) {
+    await this.withSessionLock(id, async () => {
+      if (this.runner.isActive(id)) {
+        void vscode.window.showInformationMessage(
+          `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
+        );
+        return;
+      }
       await this.createWorktree(item);
-      session = this.store.get(id);
+      const session = this.store.get(id);
       if (!session?.worktreePath) {
         return;
       }
-    }
-    this.store.update(id, { status: "working", errorMessage: undefined });
-    this.tree.refresh();
-    const updated = this.store.get(id)!;
-    const panel = this.panels.get(id);
-    if (!panel || panel.isDisposed()) {
-      await this.openChat(item);
-    } else {
-      this.refreshPanel(updated, panel);
-    }
-    const command = this.config<string>("agentCommand", "copilot");
-    const resumeArgs = this.config<string>("agentResumeArgs", "--continue")
-      .split(/\s+/)
-      .filter(Boolean);
-    const hasPriorTurn = updated.history.some((m) => m.role === "agent");
-    if (this.runner.isActive(id)) {
-      void vscode.window.showInformationMessage(
-        `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
-      );
-      return;
-    }
-    this.store.appendMessage(id, {
-      role: "user",
-      text: prompt,
-      timestamp: Date.now(),
-    });
-    this.store.appendMessage(id, {
-      role: "system",
-      text: "Agent started.",
-      timestamp: Date.now(),
-    });
-    const withUserMessage = this.store.get(id)!;
-    this.refreshPanel(withUserMessage);
-    this.runner
-      .run({
-        command,
-        args: buildAgentArgs(prompt, hasPriorTurn, resumeArgs),
-        cwd: updated.worktreePath!,
-        sessionId: id,
-      })
-      .catch((e) => {
-        if (e instanceof Error && /already running or queued/.test(e.message)) {
-          void vscode.window.showInformationMessage(
-            `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
-          );
-          return;
-        }
-        this.handleError(id, e, this.panels.get(id));
+      this.store.update(id, { status: "working", errorMessage: undefined });
+      this.tree.refresh();
+      const updated = this.store.get(id)!;
+      const panel = this.panels.get(id);
+      if (!panel || panel.isDisposed()) {
+        await this.openChat(item);
+      } else {
+        this.refreshPanel(updated, panel);
+      }
+      const command = this.config<string>("agentCommand", "copilot");
+      const resumeArgs = this.config<string>("agentResumeArgs", "--continue")
+        .split(/\s+/)
+        .filter(Boolean);
+      const hasPriorTurn = updated.history.some((m) => m.role === "agent");
+      this.store.appendMessage(id, {
+        role: "user",
+        text: prompt,
+        timestamp: Date.now(),
       });
+      this.store.appendMessage(id, {
+        role: "system",
+        text: "Agent started.",
+        timestamp: Date.now(),
+      });
+      const withUserMessage = this.store.get(id)!;
+      this.refreshPanel(withUserMessage);
+      this.runner
+        .run({
+          command,
+          args: buildAgentArgs(prompt, hasPriorTurn, resumeArgs),
+          cwd: updated.worktreePath!,
+          sessionId: id,
+        })
+        .catch((e) => {
+          if (
+            e instanceof Error &&
+            /already running or queued/.test(e.message)
+          ) {
+            void vscode.window.showInformationMessage(
+              `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
+            );
+            return;
+          }
+          this.handleError(id, e, this.panels.get(id));
+        });
+    });
   }
 
   private stopAgent(id: string): void {
@@ -388,6 +427,10 @@ export class Controller {
   }
 
   private async commit(id: string): Promise<boolean> {
+    return this.withSessionLock(id, () => this.commitInternal(id));
+  }
+
+  private async commitInternal(id: string): Promise<boolean> {
     const session = this.store.get(id);
     if (!session?.worktreePath) {
       return false;
@@ -399,13 +442,35 @@ export class Controller {
       return false;
     }
     try {
-      const dirty = await this.worktrees.hasUncommittedChanges(
+      const status = await this.worktrees.statusFiles(
         session.worktreePath
       );
-      if (!dirty) {
+      if (status.files.length === 0) {
         void vscode.window.showInformationMessage(
           "Solverino: no changes to commit."
         );
+        return false;
+      }
+      const preview = status.files.slice(0, 10).join("\n");
+      const more =
+        status.files.length > 10
+          ? `\n… and ${status.files.length - 10} more`
+          : "";
+      const sensitiveWarning =
+        status.sensitive.length > 0
+          ? `\n\n⚠ Potentially sensitive files: ${status.sensitive
+              .slice(0, 5)
+              .join(", ")}`
+          : "";
+      const confirm = await vscode.window.showWarningMessage(
+        `Commit ${status.files.length} file(s) in the worktree?${sensitiveWarning}`,
+        {
+          modal: true,
+          detail: `${preview}${more}${sensitiveWarning}`,
+        },
+        "Commit"
+      );
+      if (confirm !== "Commit") {
         return false;
       }
       const message = await vscode.window.showInputBox({
@@ -436,62 +501,115 @@ export class Controller {
   }
 
   private async pushAndCreatePR(id: string): Promise<void> {
-    const session = this.store.get(id);
-    if (!session?.worktreePath || !session.branch) {
-      return;
-    }
-    if (this.runner.isActive(id)) {
-      void vscode.window.showWarningMessage(
-        "Solverino: stop the agent before pushing — it is still writing to the worktree."
-      );
-      return;
-    }
-    const hasChanges = await this.worktrees
-      .hasUncommittedChanges(session.worktreePath)
-      .catch(() => false);
-    if (hasChanges) {
-      const commit = await vscode.window.showWarningMessage(
-        "Solverino: the worktree has uncommitted changes. Commit first?",
-        "Commit & continue",
-        "Cancel"
-      );
-      if (commit !== "Commit & continue") {
+    await this.withSessionLock(id, async () => {
+      const session = this.store.get(id);
+      if (!session?.worktreePath || !session.branch) {
         return;
       }
-      const committed = await this.commit(id);
-      if (!committed) {
-        return;
-      }
-      const stillDirty = await this.worktrees
-        .hasUncommittedChanges(session.worktreePath)
-        .catch(() => true);
-      if (stillDirty) {
+      if (this.runner.isActive(id)) {
         void vscode.window.showWarningMessage(
-          "Solverino: the worktree still has uncommitted changes — push aborted."
+          "Solverino: stop the agent before pushing — it is still writing to the worktree."
         );
         return;
       }
-    }
-    try {
-      await this.worktrees.push(session.worktreePath, session.branch);
-      const pr = await this.github.createPullRequest(
-        session.branch,
-        `Solverino: ${session.title}`,
-        `Automated change for ${session.kind} #${session.number}: ${session.title}`
+      let hasChanges: boolean;
+      try {
+        hasChanges = await this.worktrees.hasUncommittedChanges(
+          session.worktreePath
+        );
+      } catch (e) {
+        void vscode.window.showWarningMessage(
+          `Solverino: could not inspect the worktree — push aborted. (${
+            e instanceof Error ? e.message : e
+          })`
+        );
+        return;
+      }
+      if (hasChanges) {
+        const commit = await vscode.window.showWarningMessage(
+          "Solverino: the worktree has uncommitted changes. Commit first?",
+          "Commit & continue",
+          "Cancel"
+        );
+        if (commit !== "Commit & continue") {
+          return;
+        }
+        const committed = await this.commitInternal(id);
+        if (!committed) {
+          return;
+        }
+        const stillDirty = await this.worktrees
+          .hasUncommittedChanges(session.worktreePath)
+          .catch(() => true);
+        if (stillDirty) {
+          void vscode.window.showWarningMessage(
+            "Solverino: the worktree still has uncommitted changes — push aborted."
+          );
+          return;
+        }
+      }
+      if (session.branchOwned !== true) {
+        const proceed = await vscode.window.showWarningMessage(
+          `Branch "${session.branch}" existed before this Solverino chat and may contain unrelated work. Push it and open a PR from it?`,
+          { modal: true },
+          "Push anyway"
+        );
+        if (proceed !== "Push anyway") {
+          return;
+        }
+      }
+      let base: string | undefined;
+      if (session.kind === "pr") {
+        try {
+          base = await this.github.getPRBaseRef(session.number);
+        } catch (e) {
+          void vscode.window.showWarningMessage(
+            `Solverino: could not determine the base branch of PR #${session.number} — push aborted. (${
+              e instanceof Error ? e.message : e
+            })`
+          );
+          return;
+        }
+      }
+      const unpushed = await this.worktrees.unpushedCommitCount(
+        session.worktreePath,
+        session.branch
       );
-      this.store.update(id, { status: "prOpened", prUrl: pr.url });
-      this.store.appendMessage(id, {
-        role: "system",
-        text: `Pull request created: ${pr.url}`,
-        timestamp: Date.now(),
-      });
-      const updated = this.store.get(id)!;
-      this.refreshPanel(updated);
-      this.tree.refresh();
-      void vscode.env.openExternal(vscode.Uri.parse(pr.url));
-    } catch (e) {
-      this.handleError(id, e);
-    }
+      const confirm = await vscode.window.showWarningMessage(
+        `Push branch "${session.branch}" and create a pull request${
+          base ? ` against "${base}"` : ""
+        }?`,
+        {
+          modal: true,
+          detail: `${unpushed} commit(s) will be pushed to origin.`,
+        },
+        "Push & Create PR"
+      );
+      if (confirm !== "Push & Create PR") {
+        return;
+      }
+      try {
+        await this.worktrees.push(session.worktreePath, session.branch);
+        const pr = await this.github.createPullRequest(
+          session.branch,
+          `Solverino: ${session.title}`,
+          `Automated change for ${session.kind} #${session.number}: ${session.title}`,
+          base
+        );
+        this.store.update(id, { status: "prOpened", prUrl: pr.url });
+        this.store.appendMessage(id, {
+          role: "system",
+          text: `Pull request created: ${pr.url}`,
+          timestamp: Date.now(),
+        });
+        const updated = this.store.get(id)!;
+        this.refreshPanel(updated);
+        this.tree.refresh();
+        void vscode.env.openExternal(vscode.Uri.parse(pr.url));
+      } catch (e) {
+        this.handleError(id, e);
+      }
+    });
   }
 
   private openWorktreeInNewWindow(id: string): void {
