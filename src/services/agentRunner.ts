@@ -187,7 +187,13 @@ export class AgentRunner {
     forward(child.stdout);
     forward(child.stderr);
 
+    let settled = false;
+
     child.on("error", (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       this.running.delete(job.sessionId);
       queued.reject(
         new Error(
@@ -198,6 +204,10 @@ export class AgentRunner {
     });
 
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       this.running.delete(job.sessionId);
       this.events.onExit(job.sessionId, code);
       this.stopped.delete(job.sessionId);
