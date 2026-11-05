@@ -201,6 +201,18 @@ export class WorktreeService {
     }
   }
 
+  async dirtyFileCount(wtPath: string): Promise<number> {
+    const result = await run("git", ["status", "--porcelain"], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    if (result.code !== 0) {
+      return 0;
+    }
+    return result.stdout.split("\n").filter((l) => l.trim().length > 0)
+      .length;
+  }
+
   async statusFiles(
     wtPath: string
   ): Promise<{ files: string[] }> {

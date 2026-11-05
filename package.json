@@ -70,6 +70,16 @@
         "category": "Solverino"
       },
       {
+        "command": "solverino.goto",
+        "title": "Go to Issue/PR…",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.showAllOpenIssues",
+        "title": "Toggle Show All Open Issues",
+        "category": "Solverino"
+      },
+      {
         "command": "solverino.openWorktree",
         "title": "Open Worktree",
         "icon": "$(folder-opened)",
@@ -104,6 +114,11 @@
       "view/title": [
         {
           "command": "solverino.refresh",
+          "when": "view == solverino.overview",
+          "group": "navigation"
+        },
+        {
+          "command": "solverino.goto",
           "when": "view == solverino.overview",
           "group": "navigation"
         }
@@ -147,7 +162,13 @@
           "group": "inline@2"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "solverino.overview",
+        "contents": "No open issues or PRs match your filters.\n[Refresh](command:solverino.refresh)\nTo see all open issues instead of only yours, enable [Show All Open Issues](command:solverino.showAllOpenIssues)."
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
