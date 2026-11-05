@@ -15,7 +15,8 @@ export class Controller {
   private readonly store: SessionStore;
   private readonly tree: OverviewProvider;
   private readonly runner: AgentRunner;
-  private readonly worktrees: WorktreeService;
+  private worktrees: WorktreeService;
+  private worktreesConfig: { parentFolder: string; envSetup: string };
   private readonly panels = new Map<string, ChatPanel>();
   private readonly locks = new Map<string, PromiseQueue>();
   private pollTimer: NodeJS.Timeout | undefined;
@@ -43,10 +44,18 @@ export class Controller {
       },
       this.logger
     );
-    this.worktrees = new WorktreeService(
+    this.worktreesConfig = {
+      parentFolder: this.config<string>("worktreeParentFolder", ""),
+      envSetup: this.config<string>("envSetupCommand", ""),
+    };
+    this.worktrees = this.buildWorktreeService();
+  }
+
+  private buildWorktreeService(): WorktreeService {
+    return new WorktreeService(
       this.repoPath,
-      this.config<string>("worktreeParentFolder", ""),
-      this.config<string>("envSetupCommand", ""),
+      this.worktreesConfig.parentFolder,
+      this.worktreesConfig.envSetup,
       this.logger
     );
   }
@@ -102,6 +111,18 @@ export class Controller {
           this.config<number>("maxConcurrentAgents", 4)
         );
         this.startPolling();
+        const parentFolder = this.config<string>("worktreeParentFolder", "");
+        const envSetup = this.config<string>("envSetupCommand", "");
+        if (
+          parentFolder !== this.worktreesConfig.parentFolder ||
+          envSetup !== this.worktreesConfig.envSetup
+        ) {
+          this.worktreesConfig = { parentFolder, envSetup };
+          this.worktrees = this.buildWorktreeService();
+          this.logger.info(
+            "Worktree settings changed; new worktrees will use the updated configuration."
+          );
+        }
       })
     );
   }
