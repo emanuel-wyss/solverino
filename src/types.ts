@@ -44,3 +44,19 @@ export function parseWorktreeFolderName(
     number: parseInt(match[3], 10),
   };
 }
+
+export function owningRepoName(folderName: string): string | undefined {
+  let parsed = parseWorktreeFolderName(folderName);
+  if (!parsed) {
+    return undefined;
+  }
+  let repoName = parsed.repoName;
+  while (true) {
+    const inner = parseWorktreeFolderName(repoName);
+    if (!inner) {
+      break;
+    }
+    repoName = inner.repoName;
+  }
+  return repoName;
+}

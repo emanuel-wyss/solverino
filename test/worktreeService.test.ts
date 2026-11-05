@@ -4,7 +4,12 @@ import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { WorktreeService } from "../src/services/worktreeService";
-import { branchName, worktreeFolderName, parseWorktreeFolderName } from "../src/types";
+import {
+  branchName,
+  worktreeFolderName,
+  parseWorktreeFolderName,
+  owningRepoName,
+} from "../src/types";
 import { PromiseQueue, runOk } from "../src/util";
 
 describe("naming", () => {
@@ -27,6 +32,15 @@ describe("naming", () => {
       kind: "pr",
       number: 123,
     });
+  });
+
+  it("owningRepoName resolves nested Solverino worktree names", () => {
+    assert.strictEqual(owningRepoName("solverino-repo-issue-42"), "repo");
+    assert.strictEqual(
+      owningRepoName("solverino-solverino-repo-issue-42-issue-43"),
+      "repo"
+    );
+    assert.strictEqual(owningRepoName("some-other-folder"), undefined);
   });
 
   it("parseWorktreeFolderName rejects foreign folders", () => {

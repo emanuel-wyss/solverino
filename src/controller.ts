@@ -8,7 +8,12 @@ import {
 import { WorktreeService } from "./services/worktreeService";
 import { OverviewProvider, OverviewNode } from "./views/overviewProvider";
 import { Logger } from "./util";
-import { GitHubItem, branchName, parseWorktreeFolderName } from "./types";
+import {
+  GitHubItem,
+  branchName,
+  parseWorktreeFolderName,
+  owningRepoName,
+} from "./types";
 import { ActivityItem } from "./services/githubService";
 
 export class Controller {
@@ -133,6 +138,17 @@ export class Controller {
       .get<T>(key, fallback) as T;
   }
 
+  private lookupWorktreeByBranch(
+    branch: string
+  ): { branch: string; path: string } | undefined {
+    for (const [wtPath, wtBranch] of this.worktreesByPath) {
+      if (wtBranch === branch) {
+        return { branch: wtBranch, path: wtPath };
+      }
+    }
+    return undefined;
+  }
+
   private lookupWorktree(
     kind: GitHubItem["kind"],
     number: number
@@ -199,7 +215,7 @@ export class Controller {
     for (const [wtPath] of this.worktreesByPath) {
       const folder = wtPath.replace(/.*[\\/]/, "");
       const parsed = parseWorktreeFolderName(folder);
-      if (!parsed || parsed.repoName !== repoName) {
+      if (!parsed || owningRepoName(folder) !== repoName) {
         continue;
       }
       const branch = this.worktreesByPath.get(wtPath);
@@ -335,8 +351,13 @@ export class Controller {
           `${unpushed} commit(s) on ${orphan.branch} exist only locally and will be deleted`
         );
       }
-    } catch {
-      // worktree may already be gone; cleanup proceeds
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(
+        `Solverino: could not verify the worktree status on branch "${orphan.branch}"; cleanup aborted. ${message}`
+      );
+      return;
     }
     const confirm = await vscode.window.showWarningMessage(
       `Remove the orphaned worktree on branch "${orphan.branch}"?`,
@@ -584,11 +605,11 @@ export class Controller {
           return;
         }
       }
-      const info = await this.worktrees.ensure(
-        item.kind,
-        item.number,
-        prHeadBranch
-      );
+      const existingByBranch =
+        prHeadBranch && this.lookupWorktreeByBranch(prHeadBranch);
+      const info = existingByBranch
+        ? { branch: existingByBranch.branch, path: existingByBranch.path }
+        : await this.worktrees.ensure(item.kind, item.number, prHeadBranch);
       this.worktreesByPath.set(info.path, info.branch);
       this.tree.refresh();
       if (
@@ -628,6 +649,13 @@ export class Controller {
       let prHeadBranch: string | undefined;
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
+      }
+      if (prHeadBranch) {
+        const existing = this.lookupWorktreeByBranch(prHeadBranch);
+        if (existing) {
+          this.openFolderWindow(existing.path);
+          return;
+        }
       }
       const info = await this.worktrees.ensure(
         item.kind,
@@ -670,8 +698,13 @@ export class Controller {
           `${unpushed} commit(s) on ${branch} exist only locally and will be deleted`
         );
       }
-    } catch {
-      // worktree may already be gone; cleanup proceeds
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(
+        `Solverino: could not verify the worktree status for ${item.kind} #${item.number}; cleanup aborted. ${message}`
+      );
+      return;
     }
     if (item.kind === "pr" && item.state.toUpperCase() === "OPEN") {
       warnings.push(
