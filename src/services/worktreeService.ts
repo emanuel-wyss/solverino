@@ -30,10 +30,10 @@ export class WorktreeService {
     number: number
   ): string {
     const repoName = path.basename(path.resolve(repoPath)).replace(/\.git$/, "");
-    return path.join(
-      parentFolder || WorktreeService.defaultParentFolder(repoPath),
-      worktreeFolderName(repoName, kind, number)
-    );
+    const parent = parentFolder
+      ? path.resolve(repoPath, parentFolder)
+      : WorktreeService.defaultParentFolder(repoPath);
+    return path.join(parent, worktreeFolderName(repoName, kind, number));
   }
 
   async ensure(kind: ItemKind, number: number): Promise<WorktreeInfo> {
@@ -57,11 +57,15 @@ export class WorktreeService {
       }
       const branchExists = await this.branchExists(branch);
       if (!branchExists) {
-        // git worktree add -b <branch> <path>
-        await runOk("git", ["worktree", "add", "-b", branch, wtPath], {
-          cwd: this.repoPath,
-          logger: this.logger,
-        });
+        const startPoint = await this.resolveStartPoint(kind, number);
+        await runOk(
+          "git",
+          ["worktree", "add", "-b", branch, wtPath, startPoint],
+          {
+            cwd: this.repoPath,
+            logger: this.logger,
+          }
+        );
       } else {
         await runOk("git", ["worktree", "add", wtPath, branch], {
           cwd: this.repoPath,
@@ -174,6 +178,26 @@ export class WorktreeService {
       cwd: wtPath,
       logger: this.logger,
     });
+  }
+
+  private async resolveStartPoint(
+    kind: ItemKind,
+    number: number
+  ): Promise<string> {
+    if (kind === "pr") {
+      try {
+        await runOk("git", ["fetch", "origin", `pull/${number}/head`], {
+          cwd: this.repoPath,
+          logger: this.logger,
+        });
+        return "FETCH_HEAD";
+      } catch {
+        this.logger.warn(
+          `Could not fetch head of PR #${number}; falling back to the current branch.`
+        );
+      }
+    }
+    return "HEAD";
   }
 
   private async branchExists(branch: string): Promise<boolean> {
