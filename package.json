@@ -1,0 +1,223 @@
+{
+  "name": "solverino",
+  "displayName": "Solverino — Parallel PR Agents",
+  "description": "Parallel AI coding agents for your Issues & PRs — one chat and one git worktree each, with live progress and one-click PR actions.",
+  "version": "0.1.0",
+  "publisher": "emanuel-wyss",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other",
+    "Chat",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "ai",
+    "agents",
+    "worktree",
+    "github",
+    "pull request",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Solverino",
+      "properties": {
+        "solverino.maxConcurrentAgents": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum number of agent processes running in parallel. Additional chats are queued."
+        },
+        "solverino.worktreeParentFolder": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Parent folder for worktrees. Empty = sibling of the repository folder (e.g. `../solverino-<repo>-issue-42`)."
+        },
+        "solverino.agentCommand": {
+          "type": "string",
+          "default": "copilot",
+          "markdownDescription": "Agent executable to run per chat (e.g. `copilot`). It is invoked as `<command> -p <prompt>` with `cwd` set to the chat's worktree."
+        },
+        "solverino.agentResumeArgs": {
+          "type": "string",
+          "default": "--continue",
+          "markdownDescription": "Arguments appended to continue a previous agent session on follow-up messages (e.g. `--continue` for Copilot CLI)."
+        },
+        "solverino.envSetupCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional shell command run once in a freshly created worktree (e.g. `npm install`). Empty = skipped."
+        },
+        "solverino.pollIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "markdownDescription": "How often to refresh Issues/PRs from GitHub. 0 disables polling."
+        },
+        "solverino.showAllOpenIssues": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show all open issues in the overview, not only the ones assigned to you."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "solverino",
+          "title": "Solverino",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "solverino": [
+        {
+          "id": "solverino.overview",
+          "name": "Issues & PRs"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "solverino.refresh",
+        "title": "Refresh Issues & PRs",
+        "icon": "$(refresh)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.openChat",
+        "title": "Start Chat",
+        "icon": "$(comment-discussion)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.createWorktree",
+        "title": "Create Worktree",
+        "icon": "$(git-branch)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.cleanupWorktree",
+        "title": "Cleanup Worktree",
+        "icon": "$(trash)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.startAgent",
+        "title": "Start Agent",
+        "icon": "$(play)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.stopAgent",
+        "title": "Stop Agent",
+        "icon": "$(debug-stop)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.commit",
+        "title": "Commit Changes in Worktree",
+        "icon": "$(check)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.pushAndCreatePR",
+        "title": "Push & Create Pull Request",
+        "icon": "$(git-pull-request)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.openWorktreeInNewWindow",
+        "title": "Open Worktree in New Window",
+        "icon": "$(folder-opened)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.openOnGitHub",
+        "title": "Open on GitHub",
+        "icon": "$(globe)",
+        "category": "Solverino"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "solverino.refresh",
+          "when": "view == solverino.overview",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "solverino.openChat",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "solverino.startAgent",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "inline@2"
+        },
+        {
+          "command": "solverino.createWorktree",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "worktree"
+        },
+        {
+          "command": "solverino.cleanupWorktree",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "worktree"
+        },
+        {
+          "command": "solverino.openWorktreeInNewWindow",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "worktree"
+        },
+        {
+          "command": "solverino.openOnGitHub",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "github"
+        }
+      ],
+      "view/item/inline": [
+        {
+          "command": "solverino.openChat",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "solverino.startAgent",
+          "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
+          "group": "inline@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.json --outDir out && mocha 'out/test/**/*.test.js'",
+    "package": "vsce package",
+    "vsix": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.1",
+    "mocha": "^10.3.0",
+    "typescript": "^5.4.2",
+    "@vscode/vsce": "^3.6.0"
+  }
+}

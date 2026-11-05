@@ -1,0 +1,36 @@
+name: Release VSIX
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  vsix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run compile
+      - run: npm test
+      - name: Package VSIX
+        run: npm run vsix
+      - name: Resolve version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --title "Solverino $TAG" --notes "Automated build of main. Install the .vsix via Extensions → ⋯ → Install from VSIX…"
+          gh release upload "$TAG" *.vsix --clobber --repo "$GITHUB_REPOSITORY"
