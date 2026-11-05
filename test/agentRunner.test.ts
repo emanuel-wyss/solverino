@@ -111,6 +111,70 @@ describe("AgentRunner", () => {
     await first;
   });
 
+  it("cancels a queued agent before it starts", async () => {
+    const exits: Array<{ sid: string; code: number | null }> = [];
+    const runner = new AgentRunner(
+      1,
+      {
+        onOutput: () => {},
+        onExit: (sid, code) => exits.push({ sid, code }),
+      },
+      silentLogger
+    );
+    const blocking = runner.run({
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => process.exit(0), 300)"],
+      cwd: process.cwd(),
+      sessionId: "issue-1",
+    });
+    const queued = runner.run({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: process.cwd(),
+      sessionId: "issue-2",
+    });
+    assert.strictEqual(runner.isQueued("issue-2"), true);
+    assert.strictEqual(runner.stop("issue-2"), "cancelled");
+    assert.strictEqual(await queued, null);
+    assert.deepStrictEqual(exits, [{ sid: "issue-2", code: null }]);
+    await blocking;
+    assert.strictEqual(runner.isQueued("issue-2"), false);
+  });
+
+  it("rejects duplicate starts for queued sessions", async () => {
+    const runner = new AgentRunner(
+      1,
+      { onOutput: () => {}, onExit: () => {} },
+      silentLogger
+    );
+    const first = runner.run({
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => process.exit(0), 200)"],
+      cwd: process.cwd(),
+      sessionId: "issue-3",
+    });
+    assert.strictEqual(runner.isQueued("issue-3"), false);
+    const queued = runner.run({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: process.cwd(),
+      sessionId: "issue-4",
+    });
+    assert.strictEqual(runner.isQueued("issue-4"), true);
+    await assert.rejects(
+      runner.run({
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        cwd: process.cwd(),
+        sessionId: "issue-4",
+      }),
+      /running or queued/
+    );
+    runner.stop("issue-4");
+    await queued;
+    await first;
+  });
+
   it("stop kills a running agent", async () => {
     const runner = new AgentRunner(
       2,
@@ -124,7 +188,7 @@ describe("AgentRunner", () => {
       sessionId: "issue-6",
     });
     assert.strictEqual(runner.isRunning("issue-6"), true);
-    assert.strictEqual(runner.stop("issue-6"), true);
+    assert.strictEqual(runner.stop("issue-6"), "killed");
     const code = await done;
     assert.notStrictEqual(code, 0);
     assert.strictEqual(runner.isRunning("issue-6"), false);

@@ -6,6 +6,7 @@ export interface WorktreeInfo {
   branch: string;
   path: string;
   created: boolean;
+  branchCreated: boolean;
 }
 
 export class WorktreeService {
@@ -47,7 +48,12 @@ export class WorktreeService {
       const existing = await this.list();
       const match = existing.find((w) => w.path === wtPath);
       if (match) {
-        return { branch: match.branch, path: match.path, created: false };
+        return {
+          branch: match.branch,
+          path: match.path,
+          created: false,
+          branchCreated: false,
+        };
       }
       const branchExists = await this.branchExists(branch);
       if (!branchExists) {
@@ -63,11 +69,20 @@ export class WorktreeService {
         });
       }
       await this.runEnvSetup(wtPath);
-      return { branch, path: wtPath, created: true };
+      return {
+        branch,
+        path: wtPath,
+        created: true,
+        branchCreated: !branchExists,
+      };
     });
   }
 
-  async remove(kind: ItemKind, number: number): Promise<void> {
+  async remove(
+    kind: ItemKind,
+    number: number,
+    deleteBranch = true
+  ): Promise<void> {
     await this.queue.serialize(async () => {
       const wtPath = WorktreeService.worktreePath(
         this.repoPath,
@@ -83,10 +98,12 @@ export class WorktreeService {
         cwd: this.repoPath,
         logger: this.logger,
       });
-      await runOk("git", ["branch", "-D", branchName(kind, number)], {
-        cwd: this.repoPath,
-        logger: this.logger,
-      }).catch(() => {});
+      if (deleteBranch) {
+        await runOk("git", ["branch", "-D", branchName(kind, number)], {
+          cwd: this.repoPath,
+          logger: this.logger,
+        }).catch(() => {});
+      }
       await runOk("git", ["worktree", "prune"], {
         cwd: this.repoPath,
         logger: this.logger,

@@ -96,6 +96,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
         arguments: [item],
       },
     });
+    node.item = item;
     node.iconPath = new vscode.ThemeIcon(
       status === "working"
         ? "loading~spin"
@@ -114,6 +115,8 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
 }
 
 export class OverviewNode extends vscode.TreeItem {
+  item?: GitHubItem;
+
   constructor(
     label: string,
     id: string,

@@ -7,6 +7,7 @@ import { OverviewProvider } from "./views/overviewProvider";
 import { ChatPanel, ChatPanelAction } from "./views/chatPanel";
 import { Logger } from "./util";
 import { ChatSession, GitHubItem, sessionId } from "./types";
+import { OverviewNode } from "./views/overviewProvider";
 
 export class Controller {
   private readonly outputChannel: vscode.OutputChannel;
@@ -52,6 +53,38 @@ export class Controller {
 
   get overviewProvider(): OverviewProvider {
     return this.tree;
+  }
+
+  private static resolveItem(arg: unknown): GitHubItem | undefined {
+    if (!arg) {
+      return undefined;
+    }
+    const node = arg as OverviewNode;
+    if (node.item) {
+      return node.item;
+    }
+    const item = arg as GitHubItem;
+    if (typeof item.kind === "string" && typeof item.number === "number") {
+      return item;
+    }
+    return undefined;
+  }
+
+  private requireItem(arg: unknown): GitHubItem | undefined {
+    const item = Controller.resolveItem(arg);
+    if (!item) {
+      void vscode.window.showErrorMessage(
+        "Solverino: could not resolve the selected issue or PR."
+      );
+    }
+    return item;
+  }
+
+  dispose(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+    }
+    this.runner.stopAll();
   }
 
   activate(): void {
@@ -127,31 +160,63 @@ export class Controller {
       );
 
     reg("solverino.refresh", () => this.refresh());
-    reg("solverino.openChat", (item: GitHubItem) => this.openChat(item));
-    reg("solverino.createWorktree", (item: GitHubItem) =>
-      this.createWorktree(item)
-    );
-    reg("solverino.cleanupWorktree", (item: GitHubItem) =>
-      this.cleanupWorktree(item)
-    );
-    reg("solverino.startAgent", (item: GitHubItem) =>
-      this.startAgent(item, buildDefaultPrompt(item.kind, item.number, item.title, item.body))
-    );
-    reg("solverino.stopAgent", (item: GitHubItem) =>
-      this.stopAgent(sessionId(item.kind, item.number))
-    );
-    reg("solverino.commit", (item: GitHubItem) =>
-      this.commit(sessionId(item.kind, item.number))
-    );
-    reg("solverino.pushAndCreatePR", (item: GitHubItem) =>
-      this.pushAndCreatePR(sessionId(item.kind, item.number))
-    );
-    reg("solverino.openWorktreeInNewWindow", (item: GitHubItem) =>
-      this.openWorktreeInNewWindow(sessionId(item.kind, item.number))
-    );
-    reg("solverino.openOnGitHub", (item: GitHubItem) =>
-      void vscode.env.openExternal(vscode.Uri.parse(item.url))
-    );
+    reg("solverino.openChat", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.openChat(item);
+      }
+    });
+    reg("solverino.createWorktree", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.createWorktree(item);
+      }
+    });
+    reg("solverino.cleanupWorktree", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.cleanupWorktree(item);
+      }
+    });
+    reg("solverino.startAgent", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.startAgent(
+          item,
+          buildDefaultPrompt(item.kind, item.number, item.title, item.body)
+        );
+      }
+    });
+    reg("solverino.stopAgent", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        this.stopAgent(sessionId(item.kind, item.number));
+      }
+    });
+    reg("solverino.commit", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.commit(sessionId(item.kind, item.number));
+      }
+    });
+    reg("solverino.pushAndCreatePR", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void this.pushAndCreatePR(sessionId(item.kind, item.number));
+      }
+    });
+    reg("solverino.openWorktreeInNewWindow", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        this.openWorktreeInNewWindow(sessionId(item.kind, item.number));
+      }
+    });
+    reg("solverino.openOnGitHub", (arg) => {
+      const item = this.requireItem(arg);
+      if (item) {
+        void vscode.env.openExternal(vscode.Uri.parse(item.url));
+      }
+    });
   }
 
   async openChat(item: GitHubItem): Promise<void> {
@@ -185,6 +250,7 @@ export class Controller {
       const info = await this.worktrees.ensure(item.kind, item.number);
       this.store.update(session.id, {
         branch: info.branch,
+        branchOwned: session.branchOwned || info.branchCreated,
         worktreePath: info.path,
       });
       const updated = this.store.get(session.id)!;
@@ -212,15 +278,20 @@ export class Controller {
       return;
     }
     try {
-      await this.worktrees.remove(item.kind, item.number);
-      this.store.update(id, {
+      const session = this.store.get(id);
+      await this.worktrees.remove(
+        item.kind,
+        item.number,
+        session?.branchOwned === true
+      );
+      const updated = this.store.update(id, {
         worktreePath: undefined,
         branch: undefined,
+        branchOwned: false,
         status: "idle",
       });
-      const session = this.store.get(id);
-      if (session) {
-        this.refreshPanel(session);
+      if (updated) {
+        this.refreshPanel(updated);
       }
       this.tree.refresh();
     } catch (e) {
@@ -234,9 +305,9 @@ export class Controller {
     if (!session) {
       session = this.store.getOrCreate(item);
     }
-    if (this.runner.isRunning(id)) {
+    if (this.runner.isActive(id)) {
       void vscode.window.showInformationMessage(
-        `Solverino: agent for ${item.kind} #${item.number} is already running.`
+        `Solverino: agent for ${item.kind} #${item.number} is already running or queued.`
       );
       return;
     }
@@ -277,7 +348,20 @@ export class Controller {
   }
 
   private stopAgent(id: string): void {
-    if (this.runner.stop(id)) {
+    const result = this.runner.stop(id);
+    if (result === "cancelled") {
+      this.store.update(id, { status: "idle" });
+      this.store.appendMessage(id, {
+        role: "system",
+        text: "Queued agent cancelled.",
+        timestamp: Date.now(),
+      });
+      const session = this.store.get(id);
+      if (session) {
+        this.refreshPanel(session);
+      }
+      this.tree.refresh();
+    } else if (result === "killed") {
       this.store.appendMessage(id, {
         role: "system",
         text: "Agent stopped by user.",
@@ -286,10 +370,16 @@ export class Controller {
     }
   }
 
-  private async commit(id: string): Promise<void> {
+  private async commit(id: string): Promise<boolean> {
     const session = this.store.get(id);
     if (!session?.worktreePath) {
-      return;
+      return false;
+    }
+    if (this.runner.isActive(id)) {
+      void vscode.window.showWarningMessage(
+        "Solverino: stop the agent before committing — it is still writing to the worktree."
+      );
+      return false;
     }
     try {
       const dirty = await this.worktrees.hasUncommittedChanges(
@@ -299,14 +389,14 @@ export class Controller {
         void vscode.window.showInformationMessage(
           "Solverino: no changes to commit."
         );
-        return;
+        return false;
       }
       const message = await vscode.window.showInputBox({
         prompt: "Commit message",
         value: `${session.kind === "issue" ? "Fix" : "Update"} ${session.kind} #${session.number}`,
       });
       if (!message) {
-        return;
+        return false;
       }
       const result = await this.worktrees.commitAll(
         session.worktreePath,
@@ -321,14 +411,22 @@ export class Controller {
       const updated = this.store.get(id)!;
       this.refreshPanel(updated);
       this.tree.refresh();
+      return true;
     } catch (e) {
       this.handleError(id, e);
+      return false;
     }
   }
 
   private async pushAndCreatePR(id: string): Promise<void> {
     const session = this.store.get(id);
     if (!session?.worktreePath || !session.branch) {
+      return;
+    }
+    if (this.runner.isActive(id)) {
+      void vscode.window.showWarningMessage(
+        "Solverino: stop the agent before pushing — it is still writing to the worktree."
+      );
       return;
     }
     const hasChanges = await this.worktrees
@@ -340,9 +438,20 @@ export class Controller {
         "Commit & continue",
         "Cancel"
       );
-      if (commit === "Commit & continue") {
-        await this.commit(id);
-      } else {
+      if (commit !== "Commit & continue") {
+        return;
+      }
+      const committed = await this.commit(id);
+      if (!committed) {
+        return;
+      }
+      const stillDirty = await this.worktrees
+        .hasUncommittedChanges(session.worktreePath)
+        .catch(() => true);
+      if (stillDirty) {
+        void vscode.window.showWarningMessage(
+          "Solverino: the worktree still has uncommitted changes — push aborted."
+        );
         return;
       }
     }
@@ -433,6 +542,17 @@ export class Controller {
     const last = session.history[session.history.length - 1];
     if (last && last.role === "agent" && last.streaming) {
       this.store.replaceLastAgentMessage(id, last.text, false);
+    }
+    const panel = this.panels.get(id);
+    if (panel && !panel.isDisposed()) {
+      panel.closeAgentMessage();
+    }
+    if (this.runner.wasStopped(id)) {
+      this.store.update(id, { status: "idle" });
+      const stopped = this.store.get(id)!;
+      this.refreshPanel(stopped);
+      this.tree.refresh();
+      return;
     }
     if (code === 0) {
       this.store.update(id, { status: "needsReview" });

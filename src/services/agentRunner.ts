@@ -19,15 +19,21 @@ interface QueuedJob {
   reject: (err: Error) => void;
 }
 
+export type StopResult = "killed" | "cancelled" | false;
+
 export class AgentRunner {
+  private maxConcurrent: number;
   private readonly running = new Map<string, ChildProcess>();
   private readonly queue: QueuedJob[] = [];
+  private readonly stopped = new Set<string>();
 
   constructor(
-    private maxConcurrent: number,
+    maxConcurrent: number,
     private readonly events: AgentEvents,
     private readonly logger: Logger
-  ) {}
+  ) {
+    this.maxConcurrent = Math.max(1, maxConcurrent);
+  }
 
   setMaxConcurrent(max: number): void {
     this.maxConcurrent = Math.max(1, max);
@@ -36,6 +42,18 @@ export class AgentRunner {
 
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
+  }
+
+  isQueued(sessionId: string): boolean {
+    return this.queue.some((q) => q.job.sessionId === sessionId);
+  }
+
+  isActive(sessionId: string): boolean {
+    return this.isRunning(sessionId) || this.isQueued(sessionId);
+  }
+
+  wasStopped(sessionId: string): boolean {
+    return this.stopped.has(sessionId);
   }
 
   runningCount(): number {
@@ -47,9 +65,9 @@ export class AgentRunner {
   }
 
   run(job: AgentJob): Promise<number | null> {
-    if (this.running.has(job.sessionId)) {
+    if (this.isActive(job.sessionId)) {
       return Promise.reject(
-        new Error(`Agent already running for ${job.sessionId}`)
+        new Error(`Agent already running or queued for ${job.sessionId}`)
       );
     }
     return new Promise<number | null>((resolve, reject) => {
@@ -58,25 +76,44 @@ export class AgentRunner {
     });
   }
 
-  stop(sessionId: string): boolean {
+  stop(sessionId: string): StopResult {
     const child = this.running.get(sessionId);
-    if (!child) {
-      return false;
+    if (child) {
+      this.stopped.add(sessionId);
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => {
+        if (this.running.get(sessionId) === child) {
+          child.kill("SIGKILL");
+        }
+      }, 3000);
+      timer.unref();
+      return "killed";
     }
-    child.kill("SIGTERM");
-    setTimeout(() => {
-      if (!child.killed) {
-        child.kill("SIGKILL");
-      }
-    }, 3000).unref();
-    return true;
+    const index = this.queue.findIndex(
+      (q) => q.job.sessionId === sessionId
+    );
+    if (index >= 0) {
+      const [queued] = this.queue.splice(index, 1);
+      this.stopped.add(sessionId);
+      queued.resolve(null);
+      this.events.onExit(sessionId, null);
+      this.stopped.delete(sessionId);
+      return "cancelled";
+    }
+    return false;
+  }
+
+  stopAll(): void {
+    for (const sessionId of [...this.running.keys()]) {
+      this.stop(sessionId);
+    }
+    while (this.queue.length > 0) {
+      this.stop(this.queue[0].job.sessionId);
+    }
   }
 
   private drain(): void {
-    while (
-      this.running.size < this.maxConcurrent &&
-      this.queue.length > 0
-    ) {
+    while (this.running.size < this.maxConcurrent && this.queue.length > 0) {
       const next = this.queue.shift();
       if (!next) {
         break;
@@ -133,6 +170,7 @@ export class AgentRunner {
     child.on("close", (code) => {
       this.running.delete(job.sessionId);
       this.events.onExit(job.sessionId, code);
+      this.stopped.delete(job.sessionId);
       queued.resolve(code);
       this.drain();
     });

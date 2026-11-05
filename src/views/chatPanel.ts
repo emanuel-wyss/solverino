@@ -104,6 +104,10 @@ export class ChatPanel {
     void this.panel.webview.postMessage({ type: "system-message", text });
   }
 
+  closeAgentMessage(): void {
+    void this.panel.webview.postMessage({ type: "agent-close" });
+  }
+
   setStatus(state: PanelState): void {
     void this.panel.webview.postMessage({ type: "state", state });
   }
@@ -146,8 +150,8 @@ export class ChatPanel {
   <textarea id="input" placeholder="Message the agent…"></textarea>
   <button id="send">Send</button>
   <button id="stop" ${s.status === "working" ? "" : "disabled"}>Stop</button>
-  <button id="commit" ${s.hasWorktree ? "" : "disabled"}>Commit</button>
-  <button id="push" ${s.hasWorktree ? "" : "disabled"}>Push &amp; Create PR</button>
+  <button id="commit" ${s.hasWorktree && s.status !== "working" ? "" : "disabled"}>Commit</button>
+  <button id="push" ${s.hasWorktree && s.status !== "working" ? "" : "disabled"}>Push &amp; Create PR</button>
   <button id="openwt" ${s.hasWorktree ? "" : "disabled"}>Open Worktree</button>
 </footer>
 <script nonce="${nonce}">
@@ -192,12 +196,17 @@ window.addEventListener('message', (e) => {
   const m = e.data;
   if (m.type === 'history') {
     messages.innerHTML = '';
+    agentMsg = null;
     for (const msg of m.messages) {
       if (msg.role === 'agent') {
-        agentMsg = addMessage('agent', msg.text);
+        addMessage('agent', msg.text);
       } else {
         addMessage(msg.role, msg.text);
       }
+    }
+    const last = m.messages[m.messages.length - 1];
+    if (last && last.role === 'agent' && last.streaming) {
+      agentMsg = messages.lastElementChild;
     }
     messages.scrollTop = messages.scrollHeight;
   } else if (m.type === 'agent-chunk') {
@@ -208,6 +217,11 @@ window.addEventListener('message', (e) => {
       agentMsg.textContent += m.chunk;
     }
     messages.scrollTop = messages.scrollHeight;
+  } else if (m.type === 'agent-close') {
+    if (agentMsg) {
+      agentMsg.dataset.closed = '1';
+      agentMsg = null;
+    }
   } else if (m.type === 'system-message') {
     addMessage('system', m.text);
   } else if (m.type === 'state') {
@@ -216,8 +230,9 @@ window.addEventListener('message', (e) => {
     worktreeEl.textContent = s.hasWorktree ? 'worktree: ' + s.worktreePath + ' (' + s.branch + ')' : 'no worktree yet';
     document.getElementById('stop').disabled = s.status !== 'working';
     const wtDisabled = !s.hasWorktree;
-    document.getElementById('commit').disabled = wtDisabled;
-    document.getElementById('push').disabled = wtDisabled;
+    const working = s.status === 'working';
+    document.getElementById('commit').disabled = wtDisabled || working;
+    document.getElementById('push').disabled = wtDisabled || working;
     document.getElementById('openwt').disabled = wtDisabled;
   }
 });

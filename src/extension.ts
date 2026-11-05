@@ -14,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.window.showErrorMessage(`Solverino: ${message}`);
     return;
   }
+  context.subscriptions.push(controller);
   controller.activate();
 
   context.subscriptions.push(
@@ -25,6 +26,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // Agent processes are killed when their parent VS Code exits;
-  // nothing else to clean up.
+  // Controller.dispose (via context.subscriptions) stops all running and
+  // queued agent processes on extension deactivation.
 }

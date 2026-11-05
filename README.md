@@ -70,3 +70,5 @@ Press F5 to launch an Extension Development Host with Solverino loaded.
 ## License
 
 MIT
+
+Town boundary © OpenStreetMap contributors (ODbL)

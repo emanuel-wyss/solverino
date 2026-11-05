@@ -9,11 +9,14 @@ interface PersistedSession {
   number: number;
   title: string;
   branch?: string;
+  branchOwned?: boolean;
   worktreePath?: string;
   status: SessionStatus;
   history: ChatMessage[];
   prUrl?: string;
 }
+
+const STREAM_PERSIST_DEBOUNCE_MS = 500;
 
 export class SessionStore {
   private readonly sessions = new Map<string, ChatSession>();
@@ -100,7 +103,20 @@ export class SessionStore {
         streaming,
       });
     }
-    this.persist();
+    this.schedulePersist();
+  }
+
+  private persistTimer: NodeJS.Timeout | undefined;
+
+  private schedulePersist(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+    }
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.persist();
+    }, STREAM_PERSIST_DEBOUNCE_MS);
+    this.persistTimer.unref();
   }
 
   private persist(): void {
@@ -110,6 +126,7 @@ export class SessionStore {
       number: s.number,
       title: s.title,
       branch: s.branch,
+      branchOwned: s.branchOwned,
       worktreePath: s.worktreePath,
       status: s.status,
       history: s.history,

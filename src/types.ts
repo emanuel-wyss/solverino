@@ -31,6 +31,7 @@ export interface ChatSession {
   number: number;
   title: string;
   branch?: string;
+  branchOwned?: boolean;
   worktreePath?: string;
   status: SessionStatus;
   history: ChatMessage[];
