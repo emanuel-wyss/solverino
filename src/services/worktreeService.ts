@@ -51,6 +51,11 @@ export class WorktreeService {
       const existing = await this.listStrict();
       const match = existing.find((w) => w.path === wtPath);
       if (match) {
+        if (match.branch !== branch) {
+          throw new Error(
+            `Worktree path ${wtPath} is registered on branch "${match.branch}", but this session requires "${branch}". Move or remove the conflicting worktree first.`
+          );
+        }
         return {
           branch: match.branch,
           path: match.path,
