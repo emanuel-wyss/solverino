@@ -117,3 +117,17 @@ export class GitHubService {
     }
   }
 }
+
+export function isAuthOrMissingCliError(e: unknown): string | undefined {
+  if (e instanceof Error) {
+    const msg = e.message;
+    if (/Failed to start "gh"/.test(msg)) {
+      return "The GitHub CLI (gh) is not installed or not on PATH. Install it from https://cli.github.com and authenticate with `gh auth login`.";
+    }
+    if (/not authenticated|gh auth login|auth_status/i.test(msg)) {
+      return "The GitHub CLI is not authenticated. Run `gh auth login`.";
+    }
+    return msg;
+  }
+  return String(e);
+}
