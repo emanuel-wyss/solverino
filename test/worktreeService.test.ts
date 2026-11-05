@@ -193,6 +193,19 @@ describe("WorktreeService", () => {
     );
   });
 
+  it("rejects an existing worktree registered on a different branch", async () => {
+    const svc = makeService();
+    const conflictingPath = path.join(
+      worktreeParent,
+      "solverino-repo-issue-42"
+    );
+    git(["worktree", "add", "-b", "someone-else", conflictingPath], repo);
+    await assert.rejects(
+      svc.ensure("issue", 42),
+      /registered on branch "someone-else"/
+    );
+  });
+
   it("refuses to create a PR worktree when the PR head cannot be fetched", async () => {
     const base = path.dirname(repo);
     const remote = path.join(base, "remote.git");
