@@ -4,7 +4,7 @@ Solverino release notes. Add every user-facing change to the **Unreleased** sect
 
 ## v0.2.2
 
-*Ships via PRs #5 and #6.*
+*Shipped via PRs #5 and #6.*
 
 ### UX & UI (PR #5)
 

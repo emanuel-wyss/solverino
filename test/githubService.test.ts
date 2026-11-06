@@ -1,5 +1,11 @@
 import * as assert from "assert";
-import { classifyPullRequests, codespaceNewUrl } from "../src/services/githubService";
+import {
+  classifyPullRequests,
+  codespaceNewUrl,
+  isClosedBy,
+  isMergedBy,
+  isoDateDaysAgo,
+} from "../src/services/githubService";
 
 describe("classifyPullRequests", () => {
   const me = "me";
@@ -51,5 +57,24 @@ describe("codespaceNewUrl", () => {
       codespaceNewUrl("owner/repo", "feature/branch"),
       "https://codespaces.new/owner/repo/tree/feature/branch"
     );
+  });
+});
+
+describe("isoDateDaysAgo", () => {
+  it("formats an ISO date the given number of days back", () => {
+    const now = new Date("2025-06-15T12:00:00Z");
+    assert.strictEqual(isoDateDaysAgo(7, now), "2025-06-08");
+    assert.strictEqual(isoDateDaysAgo(0, now), "2025-06-15");
+  });
+});
+
+describe("isMergedBy / isClosedBy", () => {
+  it("matches only the current user", () => {
+    assert.strictEqual(isMergedBy("me", "me"), true);
+    assert.strictEqual(isMergedBy("someone-else", "me"), false);
+    assert.strictEqual(isMergedBy(undefined, "me"), false);
+    assert.strictEqual(isMergedBy("me", undefined), false);
+    assert.strictEqual(isClosedBy("me", "me"), true);
+    assert.strictEqual(isClosedBy(undefined, "me"), false);
   });
 });

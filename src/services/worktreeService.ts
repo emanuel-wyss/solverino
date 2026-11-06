@@ -65,7 +65,11 @@ export class WorktreeService {
       if (match) {
         if (match.branch !== branch) {
           throw new Error(
-            `Worktree path ${wtPath} is registered on branch "${match.branch}", but this item requires "${branch}". Move or remove the conflicting worktree first.`
+            `Worktree path ${wtPath} is ${
+              match.branch
+                ? `registered on branch "${match.branch}"`
+                : "in a detached HEAD state"
+            }, but this item requires "${branch}". Move or remove the conflicting worktree first.`
           );
         }
         return {
@@ -87,6 +91,18 @@ export class WorktreeService {
           }
         );
       } else {
+        if (kind === "pr") {
+          const unpushed = await this.unpushedCommitCountStrict(
+            this.repoPath,
+            branch,
+            startPoint
+          );
+          if (unpushed > 0) {
+            throw new Error(
+              `Branch "${branch}" has ${unpushed} commit(s) that are not on any remote or the PR head; refusing to reset it. Push the commits or clean up the worktree first.`
+            );
+          }
+        }
         await runOk("git", ["worktree", "add", wtPath, branch], {
           cwd: this.repoPath,
           logger: this.logger,
@@ -143,26 +159,53 @@ export class WorktreeService {
   }
 
   async remove(kind: ItemKind, number: number): Promise<void> {
+    const wtPath = this.expectedPath(kind, number);
+    const match = (await this.list()).find((w) => w.path === wtPath);
+    if (!match) {
+      return;
+    }
+    await this.removeEntry(wtPath, match.branch);
+  }
+
+  async removeEntry(wtPath: string, branch: string): Promise<void> {
     await this.queue.serialize(async () => {
-      const wtPath = this.expectedPath(kind, number);
-      const existing = await this.list();
-      const match = existing.find((w) => w.path === wtPath);
-      if (!match) {
-        return;
-      }
       await runOk("git", ["worktree", "remove", "--force", wtPath], {
         cwd: this.repoPath,
         logger: this.logger,
       });
-      await runOk("git", ["branch", "-D", match.branch], {
-        cwd: this.repoPath,
-        logger: this.logger,
-      }).catch(() => {});
+      if (branch) {
+        try {
+          await runOk("git", ["branch", "-D", branch], {
+            cwd: this.repoPath,
+            logger: this.logger,
+          });
+        } catch (e) {
+          const reason = e instanceof Error ? e.message : String(e);
+          throw new Error(
+            `The worktree was removed, but branch "${branch}" could not be deleted (${reason.trim()}). Review and delete the branch manually.`
+          );
+        }
+      }
       await runOk("git", ["worktree", "prune"], {
         cwd: this.repoPath,
         logger: this.logger,
       }).catch(() => {});
     });
+  }
+
+  async gitCommonDir(): Promise<string> {
+    const result = await runOk(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd: this.repoPath, logger: this.logger }
+    );
+    return result.stdout.trim();
+  }
+
+  async mainRepoName(): Promise<string> {
+    const mainRepo = (await this.gitCommonDir()).replace(/[\\/]\.git$/, "");
+    const name = path.basename(mainRepo).replace(/\.git$/, "");
+    return name || "repo";
   }
 
   async listStrict(): Promise<WorktreeEntry[]> {
@@ -188,6 +231,9 @@ export class WorktreeService {
           path: currentPath,
         });
         currentPath = undefined;
+      } else if (line.startsWith("detached") && currentPath) {
+        worktrees.push({ branch: "", path: currentPath });
+        currentPath = undefined;
       }
     }
     return worktrees;
@@ -199,6 +245,36 @@ export class WorktreeService {
     } catch {
       return [];
     }
+  }
+
+  async headCommit(wtPath: string): Promise<string | undefined> {
+    try {
+      const result = await run("git", ["rev-parse", "HEAD"], {
+        cwd: wtPath,
+        logger: this.logger,
+      });
+      return result.code === 0 && result.stdout.trim()
+        ? result.stdout.trim()
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async dirtyFileCount(wtPath: string): Promise<number> {
+    const result = await run(
+      "git",
+      ["status", "--porcelain", "--untracked-files=all"],
+      {
+        cwd: wtPath,
+        logger: this.logger,
+      }
+    );
+    if (result.code !== 0) {
+      return 0;
+    }
+    return result.stdout.split("\n").filter((l) => l.trim().length > 0)
+      .length;
   }
 
   async statusFiles(
@@ -217,20 +293,58 @@ export class WorktreeService {
     return { files };
   }
 
-  async unpushedCommitCount(
+  async hasUnmergedFiles(wtPath: string): Promise<boolean> {
+    const result = await runOk("git", ["status", "--porcelain"], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    return result.stdout
+      .split("\n")
+      .some((l) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(l));
+  }
+
+  async commitAll(wtPath: string, message: string): Promise<boolean> {
+    const status = await this.statusFiles(wtPath);
+    if (status.files.length === 0) {
+      return false;
+    }
+    await runOk("git", ["add", "-A"], { cwd: wtPath, logger: this.logger });
+    await runOk("git", ["commit", "-m", message], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    return true;
+  }
+
+  async unpushedCommitCountStrict(
     wtPath: string,
-    branch: string
+    branch: string,
+    excludeRef?: string
   ): Promise<number> {
     const result = await runOk(
       "git",
-      ["rev-list", "--count", branch, "--not", "--remotes"],
+      [
+        "rev-list",
+        "--count",
+        branch,
+        "--not",
+        "--remotes",
+        ...(excludeRef ? [excludeRef] : []),
+      ],
       { cwd: wtPath, logger: this.logger }
-    ).catch(() => undefined);
-    if (!result) {
-      return 0;
-    }
+    );
     const count = parseInt(result.stdout.trim(), 10);
     return Number.isFinite(count) && count > 0 ? count : 0;
+  }
+
+  async unpushedCommitCount(
+    wtPath: string,
+    branch: string,
+    excludeRef?: string
+  ): Promise<number> {
+    return this.unpushedCommitCountStrict(wtPath, branch, excludeRef).catch(
+      () => 0
+    );
   }
 
   private async resolveStartPoint(

@@ -11,6 +11,13 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 - **Open in Codespace**: opens `https://codespaces.new/<repo>/tree/<branch>` for the item's branch — the PR head branch (from the PR's head repository, so fork PRs work) or the existing worktree branch after confirming it exists on GitHub (with an option to push a local-only branch). If no worktree exists yet, the default branch is used.
 - **Open Copilot Agent**: ensures the worktree (same as **Open Worktree**), opens/focuses its VS Code window and opens GitHub Copilot Chat as an agent-mode editor tab in it.
 - **Existing worktrees are highlighted**: items with a worktree show a folder icon and their branch name, so you always know what is already checked out.
+- **Cleanup Worktree**: removes a worktree and its branch, with an explicit confirmation that warns about uncommitted files and locally-only commits before anything is deleted. Deleting the worktree of a still-open PR warns that the PR itself stays open.
+- **Create Draft PR** *(issues)*: closes the loop from issue to PR — ensures the worktree, commits any uncommitted changes, pushes the branch and opens a draft PR titled `#<number>: <title>` with a `Closes #<number>` body, then opens it on GitHub.
+- **Orphaned Worktrees section**: worktrees whose issue or PR is no longer open are listed with their own cleanup action, so stale checkouts never pile up.
+- **My Week**: a quick-pick summary of the PRs you merged and issues you closed in the last 7 days, each opening on GitHub.
+- **At-a-glance status**: PR items show draft state, CI check results (passing/failing/running with a colored icon), review decisions and uncommitted-file counts; issues show their labels. Tooltips include author, last activity, label list and a body excerpt.
+- **Status bar counter**: a status bar item shows how many PRs, review requests and issues are open — click it to jump to any of them.
+- **Helpful empty state**: when nothing is open, the tree shows a welcome view with a refresh action instead of a blank panel.
 - **Cleanup Worktree**: removes a worktree and its branch, with an explicit confirmation that warns about uncommitted files and locally-only commits before anything is deleted.
 
 ## Requirements
@@ -30,11 +37,16 @@ A VS Code extension that lists the open Issues and Pull Requests of your current
 | Command | Description |
 | --- | --- |
 | `Solverino: Refresh Issues & PRs` | Re-fetch issues and PRs from GitHub |
+| `Solverino: Go to Issue/PR…` | Fuzzy-search all listed items and pick an action (worktree, GitHub, Codespace, agent, cleanup) |
+| `Solverino: Toggle Show All Open Issues` | Flip the `showAllOpenIssues` setting |
 | `Solverino: Open Worktree` | Create (or reuse) the worktree and open/focus its VS Code window |
 | `Solverino: Cleanup Worktree` | Remove the worktree and its branch |
 | `Solverino: Open on GitHub` | Open the issue/PR on github.com |
 | `Solverino: Open in Codespace` | Open the item's branch as a GitHub Codespace (`https://codespaces.new/…`) |
 | `Solverino: Open Copilot Agent` | Ensure the worktree, open/focus its window and open Copilot Chat in agent mode in a new editor tab |
+| `Solverino: Create Draft PR` | For an issue: commit, push the branch and open a draft PR linked to the issue |
+| `Solverino: Cleanup Orphaned Worktree` | Remove a worktree whose issue/PR is no longer open |
+| `Solverino: My Week (Merged & Closed)` | Show the PRs merged and issues closed by you in the last 7 days |
 
 ## Settings
 

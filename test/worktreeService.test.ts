@@ -4,7 +4,12 @@ import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { WorktreeService } from "../src/services/worktreeService";
-import { branchName, worktreeFolderName } from "../src/types";
+import {
+  branchName,
+  worktreeFolderName,
+  parseWorktreeFolderName,
+  owningRepoName,
+} from "../src/types";
 import { PromiseQueue, runOk } from "../src/util";
 
 describe("naming", () => {
@@ -18,6 +23,29 @@ describe("naming", () => {
       worktreeFolderName("myrepo", "issue", 42),
       "solverino-myrepo-issue-42"
     );
+  });
+
+  it("parseWorktreeFolderName round-trips folder names with dashed repos", () => {
+    const parsed = parseWorktreeFolderName("solverino-my-repo-pr-123");
+    assert.deepStrictEqual(parsed, {
+      repoName: "my-repo",
+      kind: "pr",
+      number: 123,
+    });
+  });
+
+  it("owningRepoName resolves nested Solverino worktree names", () => {
+    assert.strictEqual(owningRepoName("solverino-repo-issue-42"), "repo");
+    assert.strictEqual(
+      owningRepoName("solverino-solverino-repo-issue-42-issue-43"),
+      "repo"
+    );
+    assert.strictEqual(owningRepoName("some-other-folder"), undefined);
+  });
+
+  it("parseWorktreeFolderName rejects foreign folders", () => {
+    assert.strictEqual(parseWorktreeFolderName("some-other-folder"), undefined);
+    assert.strictEqual(parseWorktreeFolderName("solverino-repo-issue"), undefined);
   });
 });
 
@@ -115,6 +143,76 @@ describe("WorktreeService", () => {
     assert.ok(list.some((w) => w.branch === "issue-42"));
   });
 
+  it("commitAll commits pending changes and reports no-op", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.commitAll(info.path, "nothing to do"), false);
+    fs.writeFileSync(path.join(info.path, "b.txt"), "change\n");
+    assert.strictEqual(await svc.commitAll(info.path, "#42: fix"), true);
+    const status = await svc.statusFiles(info.path);
+    assert.strictEqual(status.files.length, 0);
+  });
+
+  it("mainRepoName resolves the main checkout name, also from a worktree", async () => {
+    const svc = makeService();
+    assert.strictEqual(await svc.mainRepoName(), "repo");
+    const info = await svc.ensure("issue", 42);
+    const wtService = new WorktreeService(info.path, worktreeParent, {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+    assert.strictEqual(await wtService.mainRepoName(), "repo");
+  });
+
+  it("lists detached-HEAD worktrees with an empty branch", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    git(["checkout", "--detach"], info.path);
+    const list = await svc.listStrict();
+    const detached = list.find((w) => w.path === info.path);
+    assert.ok(detached);
+    assert.strictEqual(detached!.branch, "");
+  });
+
+  it("removeEntry skips branch deletion for detached worktrees", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    git(["checkout", "--detach"], info.path);
+    await svc.removeEntry(info.path, "");
+    const list = await svc.list();
+    assert.ok(!list.some((w) => w.path === info.path));
+    assert.ok(!fs.existsSync(info.path));
+  });
+
+  it("hasUnmergedFiles detects unresolved merge conflicts", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.hasUnmergedFiles(info.path), false);
+    git(["checkout", "-b", "other"], info.path);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "other change\n");
+    git(["commit", "-am", "other"], info.path);
+    git(["checkout", "issue-42"], info.path);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "local change\n");
+    git(["commit", "-am", "local"], info.path);
+    try {
+      git(["merge", "other"], info.path);
+    } catch {
+      // git exits non-zero when the merge conflicts, which is the point here
+    }
+    assert.strictEqual(await svc.hasUnmergedFiles(info.path), true);
+  });
+
+  it("removeEntry removes an arbitrary worktree and its branch", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    await svc.removeEntry(info.path, info.branch);
+    const list = await svc.list();
+    assert.ok(!list.some((w) => w.branch === "issue-42"));
+    assert.ok(!fs.existsSync(info.path));
+  });
+
   it("removes worktree and branch", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);
@@ -185,6 +283,23 @@ describe("WorktreeService", () => {
       svc.ensure("issue", 42),
       /registered on branch "someone-else"/
     );
+  });
+
+  it("dirtyFileCount counts tracked and untracked changes individually", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.dirtyFileCount(info.path), 0);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "changed\n");
+    fs.mkdirSync(path.join(info.path, "new-dir", "nested"), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(info.path, "new-dir", "one.txt"), "1\n");
+    fs.writeFileSync(path.join(info.path, "new-dir", "two.txt"), "2\n");
+    fs.writeFileSync(
+      path.join(info.path, "new-dir", "nested", "three.txt"),
+      "3\n"
+    );
+    assert.strictEqual(await svc.dirtyFileCount(info.path), 4);
   });
 
   it("refuses to create a PR worktree when the PR head cannot be fetched", async () => {
