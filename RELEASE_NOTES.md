@@ -2,6 +2,10 @@
 
 Solverino release notes. Add every user-facing change to the **Unreleased** section as it lands; when cutting a release, move it under a new version heading and update the `version` field in `package.json` in the same commit.
 
+## Unreleased
+
+- **Activity bar icon fixed**: replaced the white rounded square with tiny serif text (unreadable and broken-looking at activity-bar size) with a transparent, monochrome worktree-branch glyph that renders cleanly in light and dark themes.
+
 ## v0.2.2
 
 *Shipped via PRs #5 and #6.*
