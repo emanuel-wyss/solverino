@@ -144,7 +144,9 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   private orphanNode(worktree: WorktreeEntry): OverviewNode {
     const folder = worktree.path.replace(/.*[\\/]/, "");
     const node = new OverviewNode(folder, `orphan:${worktree.path}`, {
-      description: `no matching open item \u00b7 ${worktree.branch}`,
+      description: `no matching open item · ${
+        worktree.branch || "(detached)"
+      }`,
       tooltip: `Orphaned Solverino worktree\n\n${worktree.path}\nBranch: ${worktree.branch}\n\nThe issue or PR this worktree was created for is no longer open. You can safely remove it if you no longer need it.`,
       context: "orphan:worktree",
     });

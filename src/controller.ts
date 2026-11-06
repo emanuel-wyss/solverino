@@ -395,7 +395,7 @@ export class Controller {
         continue;
       }
       const branch = this.worktreesByPath.get(wtPath);
-      if (!branch) {
+      if (branch === undefined) {
         continue;
       }
       const candidateKeys = new Set([
@@ -536,7 +536,7 @@ export class Controller {
   private async cleanupOrphan(arg: unknown): Promise<void> {
     const orphan = (arg as { orphan?: { path: string; branch: string } })
       ?.orphan;
-    if (!orphan?.path || !orphan?.branch) {
+    if (!orphan?.path || orphan.branch === undefined) {
       return;
     }
     let freshOrphan: { branch: string; path: string } | undefined;
@@ -574,7 +574,7 @@ export class Controller {
       }
       const unpushed = await this.worktrees.unpushedCommitCountStrict(
         orphan.path,
-        orphanBranch
+        orphanBranch || "HEAD"
       );
       if (unpushed > 0) {
         warnings.push(
