@@ -92,6 +92,14 @@ export class WorktreeService {
           logger: this.logger,
         });
         if (kind === "pr") {
+          const unpushed = await this.unpushedCommitCount(wtPath, branch).catch(
+            () => 0
+          );
+          if (unpushed > 0) {
+            throw new Error(
+              `Branch "${branch}" has ${unpushed} commit(s) that exist only locally; refusing to reset it to the PR head. Push the commits or clean up the worktree first.`
+            );
+          }
           await runOk("git", ["reset", "--hard", startPoint], {
             cwd: wtPath,
             logger: this.logger,

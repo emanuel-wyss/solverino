@@ -7,7 +7,7 @@ import {
 } from "./services/githubService";
 import { WorktreeService } from "./services/worktreeService";
 import { OverviewProvider, OverviewNode, WorktreeLookup } from "./views/overviewProvider";
-import { Logger } from "./util";
+import { Logger, PromiseQueue } from "./util";
 import {
   GitHubItem,
   branchName,
@@ -36,6 +36,7 @@ export class Controller {
     "solverino.openCopilotAgentOnStart";
   private static readonly WT_ASSOC_KEY_PREFIX =
     "solverino.worktreeAssociations";
+  private static readonly associationPersistQueue = new PromiseQueue();
   private static readonly OPEN_AGENT_FLAG_TTL_MS = 5 * 60 * 1000;
   private static readonly URI_HANDLER_PATH = "/open-agent";
   private static readonly URI_HANDLER_BASE =
@@ -184,18 +185,21 @@ export class Controller {
     if (this.associationDelta.size === 0) {
       return;
     }
-    const key = await this.associationStorageKey();
-    const stored =
-      this.context.globalState.get<Record<string, string>>(key) ?? {};
-    for (const [itemKey, value] of this.associationDelta) {
-      if (value === null) {
-        delete stored[itemKey];
-      } else {
-        stored[itemKey] = value;
-      }
-    }
-    await this.context.globalState.update(key, stored);
+    const delta = new Map(this.associationDelta);
     this.associationDelta.clear();
+    await Controller.associationPersistQueue.serialize(async () => {
+      const key = await this.associationStorageKey();
+      const stored =
+        this.context.globalState.get<Record<string, string>>(key) ?? {};
+      for (const [itemKey, value] of delta) {
+        if (value === null) {
+          delete stored[itemKey];
+        } else {
+          stored[itemKey] = value;
+        }
+      }
+      await this.context.globalState.update(key, stored);
+    });
   }
 
   private setAssociation(key: string, path: string): void {
