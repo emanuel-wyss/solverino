@@ -87,19 +87,23 @@ export class WorktreeService {
           }
         );
       } else {
+        if (kind === "pr") {
+          const unpushed = await this.unpushedCommitCount(
+            this.repoPath,
+            branch,
+            startPoint
+          ).catch(() => 0);
+          if (unpushed > 0) {
+            throw new Error(
+              `Branch "${branch}" has ${unpushed} commit(s) that are not on any remote or the PR head; refusing to reset it. Push the commits or clean up the worktree first.`
+            );
+          }
+        }
         await runOk("git", ["worktree", "add", wtPath, branch], {
           cwd: this.repoPath,
           logger: this.logger,
         });
         if (kind === "pr") {
-          const unpushed = await this.unpushedCommitCount(wtPath, branch).catch(
-            () => 0
-          );
-          if (unpushed > 0) {
-            throw new Error(
-              `Branch "${branch}" has ${unpushed} commit(s) that exist only locally; refusing to reset it to the PR head. Push the commits or clean up the worktree first.`
-            );
-          }
           await runOk("git", ["reset", "--hard", startPoint], {
             cwd: wtPath,
             logger: this.logger,
@@ -288,11 +292,19 @@ export class WorktreeService {
 
   async unpushedCommitCount(
     wtPath: string,
-    branch: string
+    branch: string,
+    excludeRef?: string
   ): Promise<number> {
     const result = await runOk(
       "git",
-      ["rev-list", "--count", branch, "--not", "--remotes"],
+      [
+        "rev-list",
+        "--count",
+        branch,
+        "--not",
+        "--remotes",
+        ...(excludeRef ? [excludeRef] : []),
+      ],
       { cwd: wtPath, logger: this.logger }
     ).catch(() => undefined);
     if (!result) {
