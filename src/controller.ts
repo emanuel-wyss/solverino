@@ -228,7 +228,7 @@ export class Controller {
     kind: GitHubItem["kind"],
     number: number,
     expectedBranch: string | undefined
-  ): { branch: string; path: string } | undefined {
+  ): { branch: string; path: string; managed: boolean } | undefined {
     if (!expectedBranch) {
       return undefined;
     }
@@ -243,13 +243,15 @@ export class Controller {
       void this.persistAssociationDelta();
       return undefined;
     }
-    return { branch, path };
+    return { branch, path, managed: true };
   }
 
   private async findReusableWorktree(
     branch: string,
     expectedHeadSha: string | undefined
-  ): Promise<{ branch: string; path: string } | undefined> {
+  ): Promise<
+    { branch: string; path: string; managed: boolean } | undefined
+  > {
     if (!expectedHeadSha) {
       return undefined;
     }
@@ -258,15 +260,16 @@ export class Controller {
       if (wtBranch !== branch) {
         continue;
       }
-      const folder = wtPath.replace(/.*[\\/]/, "");
-      const parsed = parseWorktreeFolderName(folder);
-      if (!parsed || owningRepoName(folder) !== repoName) {
-        continue;
-      }
       if ((await this.worktrees.headCommit(wtPath)) !== expectedHeadSha) {
         continue;
       }
-      return { branch: wtBranch, path: wtPath };
+      const folder = wtPath.replace(/.*[\\/]/, "");
+      const parsed = parseWorktreeFolderName(folder);
+      return {
+        branch: wtBranch,
+        path: wtPath,
+        managed: !!parsed && owningRepoName(folder) === repoName,
+      };
     }
     return undefined;
   }
@@ -861,7 +864,10 @@ export class Controller {
               await this.github.getPRHeadSha(item.number)
             )
           : undefined);
-      if (existingByBranch && !this.itemWorktreeAssociations.has(`${item.kind}:${item.number}`)) {
+      if (
+        existingByBranch?.managed &&
+        !this.itemWorktreeAssociations.has(`${item.kind}:${item.number}`)
+      ) {
         this.setAssociation(`${item.kind}:${item.number}`, existingByBranch.path);
         void this.persistAssociationDelta();
       }
@@ -997,8 +1003,10 @@ export class Controller {
           await this.github.getPRHeadSha(item.number)
         );
         if (existing) {
-          this.setAssociation(`${item.kind}:${item.number}`, existing.path);
-          void this.persistAssociationDelta();
+          if (existing.managed) {
+            this.setAssociation(`${item.kind}:${item.number}`, existing.path);
+            void this.persistAssociationDelta();
+          }
           this.tree.refresh();
           this.openFolderWindow(existing.path);
           return;
