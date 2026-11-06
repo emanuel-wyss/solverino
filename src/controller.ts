@@ -501,6 +501,11 @@ export class Controller {
                 branchCreated: false,
               }
             : await this.worktrees.ensure(item.kind, item.number);
+          if (await this.worktrees.hasUnmergedFiles(wt.path)) {
+            throw new Error(
+              "The worktree has unresolved merge conflicts; resolve them before creating a draft PR."
+            );
+          }
           const committed = await this.worktrees.commitAll(
             wt.path,
             `#${item.number}: ${item.title}`
@@ -530,6 +535,7 @@ export class Controller {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);
       void vscode.window.showErrorMessage(`Solverino: ${message}`);
+      void this.scanWorktrees();
     }
   }
 
@@ -615,6 +621,7 @@ export class Controller {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);
       void vscode.window.showErrorMessage(`Solverino: ${message}`);
+      void this.scanWorktrees();
     }
   }
 

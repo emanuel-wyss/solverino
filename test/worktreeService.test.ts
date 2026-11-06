@@ -186,6 +186,24 @@ describe("WorktreeService", () => {
     assert.ok(!fs.existsSync(info.path));
   });
 
+  it("hasUnmergedFiles detects unresolved merge conflicts", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    assert.strictEqual(await svc.hasUnmergedFiles(info.path), false);
+    git(["checkout", "-b", "other"], info.path);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "other change\n");
+    git(["commit", "-am", "other"], info.path);
+    git(["checkout", "issue-42"], info.path);
+    fs.writeFileSync(path.join(info.path, "a.txt"), "local change\n");
+    git(["commit", "-am", "local"], info.path);
+    try {
+      git(["merge", "other"], info.path);
+    } catch {
+      // git exits non-zero when the merge conflicts, which is the point here
+    }
+    assert.strictEqual(await svc.hasUnmergedFiles(info.path), true);
+  });
+
   it("removeEntry removes an arbitrary worktree and its branch", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);

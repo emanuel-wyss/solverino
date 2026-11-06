@@ -174,10 +174,17 @@ export class WorktreeService {
         logger: this.logger,
       });
       if (branch) {
-        await runOk("git", ["branch", "-D", branch], {
-          cwd: this.repoPath,
-          logger: this.logger,
-        });
+        try {
+          await runOk("git", ["branch", "-D", branch], {
+            cwd: this.repoPath,
+            logger: this.logger,
+          });
+        } catch (e) {
+          const reason = e instanceof Error ? e.message : String(e);
+          throw new Error(
+            `The worktree was removed, but branch "${branch}" could not be deleted (${reason.trim()}). Review and delete the branch manually.`
+          );
+        }
       }
       await runOk("git", ["worktree", "prune"], {
         cwd: this.repoPath,
@@ -284,6 +291,16 @@ export class WorktreeService {
       .map((l) => l.replace(/^\S+\s+/, ""))
       .map((f) => f.replace(/^"|"$/g, ""));
     return { files };
+  }
+
+  async hasUnmergedFiles(wtPath: string): Promise<boolean> {
+    const result = await runOk("git", ["status", "--porcelain"], {
+      cwd: wtPath,
+      logger: this.logger,
+    });
+    return result.stdout
+      .split("\n")
+      .some((l) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(l));
   }
 
   async commitAll(wtPath: string, message: string): Promise<boolean> {
