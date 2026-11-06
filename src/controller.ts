@@ -228,12 +228,15 @@ export class Controller {
     if (!expectedBranch) {
       return undefined;
     }
-    const path = this.itemWorktreeAssociations.get(`${kind}:${number}`);
+    const key = `${kind}:${number}`;
+    const path = this.itemWorktreeAssociations.get(key);
     if (!path) {
       return undefined;
     }
     const branch = this.worktreesByPath.get(path);
     if (!branch || branch !== expectedBranch) {
+      this.deleteAssociation(key);
+      void this.persistAssociationDelta();
       return undefined;
     }
     return { branch, path };
