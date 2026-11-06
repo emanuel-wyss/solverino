@@ -222,14 +222,18 @@ export class Controller {
 
   private associatedWorktree(
     kind: GitHubItem["kind"],
-    number: number
+    number: number,
+    expectedBranch: string | undefined
   ): { branch: string; path: string } | undefined {
+    if (!expectedBranch) {
+      return undefined;
+    }
     const path = this.itemWorktreeAssociations.get(`${kind}:${number}`);
     if (!path) {
       return undefined;
     }
     const branch = this.worktreesByPath.get(path);
-    if (!branch) {
+    if (!branch || branch !== expectedBranch) {
       return undefined;
     }
     return { branch, path };
@@ -310,9 +314,9 @@ export class Controller {
   }
 
   async refresh(): Promise<void> {
-    await this.loadWorktreeAssociations();
     this.tree.setLoading(true);
     try {
+      await this.loadWorktreeAssociations();
       const assignedOnly = !this.config<boolean>("showAllOpenIssues", false);
       const [issues, prs] = await Promise.all([
         this.github.listIssues(assignedOnly),
@@ -802,7 +806,7 @@ export class Controller {
         }
       }
       const existingByBranch =
-        this.associatedWorktree(item.kind, item.number) ??
+        this.associatedWorktree(item.kind, item.number, expectedBranch) ??
         (prHeadBranch
           ? await this.findReusableWorktree(
               prHeadBranch,
@@ -930,7 +934,11 @@ export class Controller {
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
-      const associated = this.associatedWorktree(item.kind, item.number);
+      const associated = this.associatedWorktree(
+        item.kind,
+        item.number,
+        prHeadBranch ?? branchName(item.kind, item.number)
+      );
       if (associated) {
         this.openFolderWindow(associated.path);
         return;
