@@ -212,6 +212,230 @@ export class GitHubService {
     return (await this.getPRHead(number)).ref;
   }
 
+  async createDraftPR(
+    branch: string,
+    title: string,
+    body: string
+  ): Promise<string> {
+    const url = await this.gh([
+      "pr",
+      "create",
+      "--draft",
+      "--head",
+      branch,
+      "--title",
+      title,
+      "--body",
+      body,
+    ]);
+    return url.trim();
+  }
+
+  async getPRHeadSha(number: number): Promise<string | undefined> {
+    try {
+      const out = await this.gh([
+        "pr",
+        "view",
+        String(number),
+        "--json",
+        "headRefOid",
+      ]);
+      return (JSON.parse(out) as { headRefOid?: string }).headRefOid;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private static readonly ITEM_STATE_TTL_MS = 60_000;
+  private itemStateCache = new Map<
+    string,
+    { state: string | undefined; at: number }
+  >();
+
+  async getItemState(kind: ItemKind, number: number): Promise<string | undefined> {
+    const cacheKey = `${kind}:${number}`;
+    const cached = this.itemStateCache.get(cacheKey);
+    if (
+      cached &&
+      cached.state !== undefined &&
+      Date.now() - cached.at < GitHubService.ITEM_STATE_TTL_MS
+    ) {
+      return cached.state;
+    }
+    try {
+      const out = await this.gh([
+        kind === "pr" ? "pr" : "issue",
+        "view",
+        String(number),
+        "--json",
+        "state",
+      ]);
+      const state = (JSON.parse(out) as { state?: string }).state;
+      const normalized = state?.toUpperCase();
+      if (normalized) {
+        this.itemStateCache.set(cacheKey, { state: normalized, at: Date.now() });
+      }
+      return normalized;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (/could not resolve|not found/i.test(message)) {
+        this.itemStateCache.set(cacheKey, {
+          state: "NOT_FOUND",
+          at: Date.now(),
+        });
+        return "NOT_FOUND";
+      }
+      this.logger.warn(
+        `Could not determine the state of ${kind} #${number}: ${message}`
+      );
+      return undefined;
+    }
+  }
+
+  private static readonly SEARCH_PAGE_SIZE = 50;
+  private static readonly SEARCH_MAX_PAGES = 5;
+
+  private async ghGraphql<T>(selection: string): Promise<T> {
+    const document = `query { ${selection} }`;
+    const out = await this.gh([
+      "api",
+      "graphql",
+      "-f",
+      `query=${document}`,
+    ]);
+    return JSON.parse(out) as T;
+  }
+
+  private async searchAllPages<T>(
+    buildSelection: (after?: string) => string,
+    extract: (
+      page: unknown,
+      user: string
+    ) => { items: T[]; hasNextPage: boolean; endCursor?: string }
+  ): Promise<T[]> {
+    const user = await this.getCurrentUser();
+    if (!user) {
+      return [];
+    }
+    const all: T[] = [];
+    let after: string | undefined;
+    for (
+      let page = 0;
+      page < GitHubService.SEARCH_MAX_PAGES && (page === 0 || after);
+      page++
+    ) {
+      const parsed = await this.ghGraphql(buildSelection(after));
+      const { items, hasNextPage, endCursor } = extract(parsed, user);
+      all.push(...items);
+      if (!hasNextPage || !endCursor) {
+        break;
+      }
+      after = endCursor;
+    }
+    return all;
+  }
+
+  async listRecentlyMergedPRs(days = 7): Promise<ActivityItem[]> {
+    const slug = await this.getRepoSlug();
+    const qualifier = `repo:${slug} is:pr merged:>=${isoDateDaysAgo(days)}`;
+    return this.searchAllPages(
+      (after) =>
+        `search(query: "${qualifier}", type: ISSUE, first: ${
+          GitHubService.SEARCH_PAGE_SIZE
+        }${after ? `, after: "${after}"` : ""}) ` +
+        `{ nodes { ... on PullRequest { number title url closedAt mergedBy { login } } } ` +
+        `pageInfo { hasNextPage endCursor } }`,
+      (page, user) => {
+        const parsed = page as {
+          data?: {
+            search?: {
+              nodes?:
+                | {
+                    number: number;
+                    title: string;
+                    url: string;
+                    closedAt: string;
+                    mergedBy?: { login?: string } | null;
+                  }[]
+                | null;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+          };
+        };
+        const search = parsed.data?.search;
+        const nodes = search?.nodes ?? [];
+        return {
+          items: nodes
+            .filter((n) => isMergedBy(n.mergedBy?.login, user))
+            .map((n) => ({
+              kind: "pr" as const,
+              number: n.number,
+              title: n.title,
+              url: n.url,
+              closedAt: n.closedAt,
+            })),
+          hasNextPage: !!search?.pageInfo?.hasNextPage,
+          endCursor: search?.pageInfo?.endCursor,
+        };
+      }
+    );
+  }
+
+  async listRecentlyClosedIssues(days = 7): Promise<ActivityItem[]> {
+    const slug = await this.getRepoSlug();
+    const qualifier = `repo:${slug} is:issue closed:>=${isoDateDaysAgo(days)}`;
+    return this.searchAllPages(
+      (after) =>
+        `search(query: "${qualifier}", type: ISSUE, first: ${
+          GitHubService.SEARCH_PAGE_SIZE
+        }${after ? `, after: "${after}"` : ""}) ` +
+        `{ nodes { ... on Issue { number title url closedAt ` +
+        `timelineItems(itemTypes: CLOSED_EVENT, last: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } ` +
+        `pageInfo { hasNextPage endCursor } }`,
+      (page, user) => {
+        const parsed = page as {
+          data?: {
+            search?: {
+              nodes?:
+                | {
+                    number: number;
+                    title: string;
+                    url: string;
+                    closedAt: string;
+                    timelineItems?: {
+                      nodes?: { actor?: { login?: string } | null }[] | null;
+                    } | null;
+                  }[]
+                | null;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            };
+          };
+        };
+        const search = parsed.data?.search;
+        const nodes = search?.nodes ?? [];
+        return {
+          items: nodes
+            .filter((n) =>
+              isClosedBy(
+                n.timelineItems?.nodes?.[n.timelineItems.nodes.length - 1]
+                  ?.actor?.login,
+                user
+              )
+            )
+            .map((n) => ({
+              kind: "issue" as const,
+              number: n.number,
+              title: n.title,
+              url: n.url,
+              closedAt: n.closedAt,
+            })),
+          hasNextPage: !!search?.pageInfo?.hasNextPage,
+          endCursor: search?.pageInfo?.endCursor,
+        };
+      }
+    );
+  }
+
   async listPullRequests(): Promise<PullRequestSections> {
     const raw = JSON.parse(
       await this.gh([
@@ -228,6 +452,33 @@ export class GitHubService {
     const items = toItems(raw, "pr");
     return classifyPullRequests(items, await this.getCurrentUser());
   }
+}
+
+export interface ActivityItem {
+  kind: ItemKind;
+  number: number;
+  title: string;
+  url: string;
+  closedAt: string;
+}
+
+export function isoDateDaysAgo(days: number, now = new Date()): string {
+  const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+export function isMergedBy(
+  mergedBy: string | undefined,
+  currentUser: string | undefined
+): boolean {
+  return !!currentUser && mergedBy === currentUser;
+}
+
+export function isClosedBy(
+  closedBy: string | undefined,
+  currentUser: string | undefined
+): boolean {
+  return !!currentUser && closedBy === currentUser;
 }
 
 export function isAuthOrMissingCliError(e: unknown): string | undefined {

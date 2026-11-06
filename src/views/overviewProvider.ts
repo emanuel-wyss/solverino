@@ -8,6 +8,7 @@ import {
   itemStatusText,
   relativeTime,
 } from "../types";
+import { WorktreeEntry } from "../services/worktreeService";
 
 export interface WorktreeLookup {
   branch: string;
@@ -24,6 +25,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
   private issues: GitHubItem[] = [];
   private prs: GitHubItem[] = [];
   private reviewPrs: GitHubItem[] = [];
+  private orphans: WorktreeEntry[] = [];
   private loading = false;
 
   constructor(
@@ -50,6 +52,14 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     this.issues = issues;
     this.prs = prs;
     this.reviewPrs = reviewPrs;
+  }
+
+  setOrphans(orphans: WorktreeEntry[]): void {
+    this.orphans = orphans;
+  }
+
+  currentOrphans(): WorktreeEntry[] {
+    return this.orphans;
   }
 
   allItems(): GitHubItem[] {
@@ -98,6 +108,15 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
           })
         );
       }
+      if (this.orphans.length > 0) {
+        nodes.push(
+          new OverviewNode("Orphaned Worktrees", "section-orphans", {
+            expand: vscode.TreeItemCollapsibleState.Collapsed,
+            icon: "warning",
+            description: String(this.orphans.length),
+          })
+        );
+      }
       if (nodes.length === 0 && this.loading) {
         return [
           new OverviewNode("Loading…", "loading", {
@@ -116,7 +135,24 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
     if (element.id === "section-issues") {
       return this.issues.map((i) => this.itemNode(i));
     }
+    if (element.id === "section-orphans") {
+      return this.orphans.map((w) => this.orphanNode(w));
+    }
     return [];
+  }
+
+  private orphanNode(worktree: WorktreeEntry): OverviewNode {
+    const folder = worktree.path.replace(/.*[\\/]/, "");
+    const node = new OverviewNode(folder, `orphan:${worktree.path}`, {
+      description: `no matching open item · ${
+        worktree.branch || "(detached)"
+      }`,
+      tooltip: `Orphaned Solverino worktree\n\n${worktree.path}\nBranch: ${worktree.branch}\n\nThe issue or PR this worktree was created for is no longer open. You can safely remove it if you no longer need it.`,
+      context: "orphan:worktree",
+    });
+    node.orphan = { path: worktree.path, branch: worktree.branch };
+    node.iconPath = new vscode.ThemeIcon("folder");
+    return node;
   }
 
   private itemNode(item: GitHubItem): OverviewNode {
@@ -207,6 +243,7 @@ export class OverviewProvider implements vscode.TreeDataProvider<OverviewNode> {
 
 export class OverviewNode extends vscode.TreeItem {
   item?: GitHubItem;
+  orphan?: { path: string; branch: string };
 
   constructor(
     label: string,

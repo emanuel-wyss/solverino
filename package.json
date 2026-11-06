@@ -1,7 +1,7 @@
 {
   "name": "solverino",
-  "displayName": "Solverino — Issue & PR Worktrees",
-  "description": "One-click git worktrees for your GitHub Issues & Pull Requests — see which ones already have a worktree and clean them up when done.",
+  "displayName": "Solverino \u2014 Issue & PR Worktrees",
+  "description": "One-click git worktrees for your GitHub Issues & Pull Requests \u2014 see which ones already have a worktree and clean them up when done.",
   "version": "0.2.1",
   "publisher": "emanuel-wyss",
   "license": "MIT",
@@ -108,10 +108,33 @@
         "title": "Open Copilot Agent",
         "icon": "$(sparkle)",
         "category": "Solverino"
+      },
+      {
+        "command": "solverino.createDraftPR",
+        "title": "Create Draft PR",
+        "icon": "$(git-pull-request-draft)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.cleanupOrphan",
+        "title": "Cleanup Orphaned Worktree",
+        "icon": "$(trash)",
+        "category": "Solverino"
+      },
+      {
+        "command": "solverino.myWeek",
+        "title": "My Week (Merged & Closed)",
+        "icon": "$(graph)",
+        "category": "Solverino"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "solverino.myWeek",
+          "when": "view == solverino.overview",
+          "group": "navigation"
+        },
         {
           "command": "solverino.refresh",
           "when": "view == solverino.overview",
@@ -148,6 +171,16 @@
           "command": "solverino.openCopilotAgent",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr)/",
           "group": "worktree"
+        },
+        {
+          "command": "solverino.createDraftPR",
+          "when": "view == solverino.overview && viewItem =~ /^issue/",
+          "group": "flows"
+        },
+        {
+          "command": "solverino.cleanupOrphan",
+          "when": "view == solverino.overview && viewItem =~ /^orphan/",
+          "group": "worktree"
         }
       ],
       "view/item/inline": [
@@ -160,6 +193,11 @@
           "command": "solverino.cleanupWorktree",
           "when": "view == solverino.overview && viewItem =~ /^(issue|pr):worktree$/",
           "group": "inline@2"
+        },
+        {
+          "command": "solverino.cleanupOrphan",
+          "when": "view == solverino.overview && viewItem =~ /^orphan/",
+          "group": "inline@1"
         }
       ]
     },
