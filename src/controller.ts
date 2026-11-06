@@ -224,11 +224,11 @@ export class Controller {
     void this.persistAssociationDelta();
   }
 
-  private associatedWorktree(
+  private async associatedWorktree(
     kind: GitHubItem["kind"],
     number: number,
     expectedBranch: string | undefined
-  ): { branch: string; path: string; managed: boolean } | undefined {
+  ): Promise<{ branch: string; path: string; managed: boolean } | undefined> {
     if (!expectedBranch) {
       return undefined;
     }
@@ -243,7 +243,12 @@ export class Controller {
       void this.persistAssociationDelta();
       return undefined;
     }
-    return { branch, path, managed: true };
+    const folder = path.replace(/.*[\\/]/, "");
+    const parsed = parseWorktreeFolderName(folder);
+    const managed =
+      !!parsed &&
+      owningRepoName(folder) === (await this.worktrees.mainRepoName());
+    return { branch, path, managed };
   }
 
   private async findReusableWorktree(
@@ -858,7 +863,11 @@ export class Controller {
         }
       }
       const existingByBranch =
-        this.associatedWorktree(item.kind, item.number, expectedBranch) ??
+        (await this.associatedWorktree(
+          item.kind,
+          item.number,
+          expectedBranch
+        )) ??
         (prHeadBranch
           ? await this.findReusableWorktree(
               prHeadBranch,
@@ -989,7 +998,7 @@ export class Controller {
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
-      const associated = this.associatedWorktree(
+      const associated = await this.associatedWorktree(
         item.kind,
         item.number,
         prHeadBranch ?? branchName(item.kind, item.number)
@@ -1008,6 +1017,7 @@ export class Controller {
             this.setAssociation(`${item.kind}:${item.number}`, existing.path);
             void this.persistAssociationDelta();
           }
+          this.worktreesByPath.set(existing.path, existing.branch);
           this.tree.refresh();
           this.openFolderWindow(existing.path);
           return;
@@ -1076,6 +1086,18 @@ export class Controller {
     if (!fresh) {
       void vscode.window.showInformationMessage(
         `Solverino: no worktree exists for ${item.kind} #${item.number}.`
+      );
+      return;
+    }
+    const cleanupFolder = wtPath.replace(/.*[\\/]/, "");
+    const cleanupParsed = parseWorktreeFolderName(cleanupFolder);
+    if (
+      !cleanupParsed ||
+      owningRepoName(cleanupFolder) !==
+        (await this.worktrees.mainRepoName())
+    ) {
+      void vscode.window.showErrorMessage(
+        `Solverino: refusing to remove ${wtPath} because it is not a Solverino-managed worktree.`
       );
       return;
     }
