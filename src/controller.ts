@@ -256,7 +256,8 @@ export class Controller {
       return undefined;
     }
     const repoName = await this.worktrees.mainRepoName();
-    for (const [wtPath, wtBranch] of this.worktreesByPath) {
+    const list = await this.worktrees.listStrict();
+    for (const { path: wtPath, branch: wtBranch } of list) {
       if (wtBranch !== branch) {
         continue;
       }

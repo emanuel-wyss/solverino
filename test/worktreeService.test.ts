@@ -279,7 +279,9 @@ describe("WorktreeService", () => {
       svc.ensure("pr", 7, "issue-42"),
       (e: Error) =>
         e.message.includes("already checked out at") &&
-        e.message.includes(info.path)
+        e.message.includes(info.path) &&
+        e.message.includes("unrelated to PR #7") &&
+        e.message.includes("rename or remove its local branch")
     );
   });
 

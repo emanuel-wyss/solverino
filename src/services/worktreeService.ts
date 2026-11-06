@@ -84,7 +84,9 @@ export class WorktreeService {
       );
       if (branchHolder) {
         throw new Error(
-          `Branch "${branch}" is already checked out at ${branchHolder.path}. Open that folder instead, or switch its branch first.`
+          kind === "pr"
+            ? `Branch "${branch}" is already checked out at ${branchHolder.path}. If that checkout is unrelated to PR #${number}, rename or remove its local branch first, then retry.`
+            : `Branch "${branch}" is already checked out at ${branchHolder.path}. Open that folder instead, or switch its branch first.`
         );
       }
       const startPoint = await this.resolveStartPoint(kind, number);
