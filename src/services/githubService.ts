@@ -246,7 +246,22 @@ export class GitHubService {
     }
   }
 
+  private static readonly ITEM_STATE_TTL_MS = 60_000;
+  private itemStateCache = new Map<
+    string,
+    { state: string | undefined; at: number }
+  >();
+
   async getItemState(kind: ItemKind, number: number): Promise<string | undefined> {
+    const cacheKey = `${kind}:${number}`;
+    const cached = this.itemStateCache.get(cacheKey);
+    if (
+      cached &&
+      cached.state !== undefined &&
+      Date.now() - cached.at < GitHubService.ITEM_STATE_TTL_MS
+    ) {
+      return cached.state;
+    }
     try {
       const out = await this.gh([
         kind === "pr" ? "pr" : "issue",
@@ -256,10 +271,18 @@ export class GitHubService {
         "state",
       ]);
       const state = (JSON.parse(out) as { state?: string }).state;
-      return state?.toUpperCase();
+      const normalized = state?.toUpperCase();
+      if (normalized) {
+        this.itemStateCache.set(cacheKey, { state: normalized, at: Date.now() });
+      }
+      return normalized;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (/could not resolve|not found/i.test(message)) {
+        this.itemStateCache.set(cacheKey, {
+          state: "NOT_FOUND",
+          at: Date.now(),
+        });
         return "NOT_FOUND";
       }
       this.logger.warn(

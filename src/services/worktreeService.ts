@@ -65,7 +65,11 @@ export class WorktreeService {
       if (match) {
         if (match.branch !== branch) {
           throw new Error(
-            `Worktree path ${wtPath} is registered on branch "${match.branch}", but this item requires "${branch}". Move or remove the conflicting worktree first.`
+            `Worktree path ${wtPath} is ${
+              match.branch
+                ? `registered on branch "${match.branch}"`
+                : "in a detached HEAD state"
+            }, but this item requires "${branch}". Move or remove the conflicting worktree first.`
           );
         }
         return {
@@ -169,10 +173,12 @@ export class WorktreeService {
         cwd: this.repoPath,
         logger: this.logger,
       });
-      await runOk("git", ["branch", "-D", branch], {
-        cwd: this.repoPath,
-        logger: this.logger,
-      }).catch(() => {});
+      if (branch) {
+        await runOk("git", ["branch", "-D", branch], {
+          cwd: this.repoPath,
+          logger: this.logger,
+        });
+      }
       await runOk("git", ["worktree", "prune"], {
         cwd: this.repoPath,
         logger: this.logger,
@@ -217,6 +223,9 @@ export class WorktreeService {
           branch: line.slice("branch refs/heads/".length),
           path: currentPath,
         });
+        currentPath = undefined;
+      } else if (line.startsWith("detached") && currentPath) {
+        worktrees.push({ branch: "", path: currentPath });
         currentPath = undefined;
       }
     }

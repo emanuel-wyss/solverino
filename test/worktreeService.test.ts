@@ -166,6 +166,26 @@ describe("WorktreeService", () => {
     assert.strictEqual(await wtService.mainRepoName(), "repo");
   });
 
+  it("lists detached-HEAD worktrees with an empty branch", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    git(["checkout", "--detach"], info.path);
+    const list = await svc.listStrict();
+    const detached = list.find((w) => w.path === info.path);
+    assert.ok(detached);
+    assert.strictEqual(detached!.branch, "");
+  });
+
+  it("removeEntry skips branch deletion for detached worktrees", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    git(["checkout", "--detach"], info.path);
+    await svc.removeEntry(info.path, "");
+    const list = await svc.list();
+    assert.ok(!list.some((w) => w.path === info.path));
+    assert.ok(!fs.existsSync(info.path));
+  });
+
   it("removeEntry removes an arbitrary worktree and its branch", async () => {
     const svc = makeService();
     const info = await svc.ensure("issue", 42);
