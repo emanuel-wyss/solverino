@@ -4,6 +4,10 @@
   "description": "One-click git worktrees for your GitHub Issues & Pull Requests \u2014 see which ones already have a worktree and clean them up when done.",
   "version": "0.2.2",
   "publisher": "emanuel-wyss",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emanuel-wyss/solverino"
+  },
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
