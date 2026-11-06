@@ -79,6 +79,16 @@ export class WorktreeService {
           branchCreated: false,
         };
       }
+      const branchHolder = existing.find(
+        (w) => w.branch === branch && w.path !== wtPath
+      );
+      if (branchHolder) {
+        throw new Error(
+          kind === "pr"
+            ? `Branch "${branch}" is already checked out at ${branchHolder.path}. If that checkout is unrelated to PR #${number}, rename or remove its local branch first, then retry.`
+            : `Branch "${branch}" is already checked out at ${branchHolder.path}. Open that folder instead, or switch its branch first.`
+        );
+      }
       const startPoint = await this.resolveStartPoint(kind, number);
       const branchExists = await this.branchExists(branch);
       if (!branchExists) {

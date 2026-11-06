@@ -272,6 +272,19 @@ describe("WorktreeService", () => {
     assert.strictEqual(checkedOut, "feature-branch");
   });
 
+  it("reports a clear error when the branch is checked out in another worktree", async () => {
+    const svc = makeService();
+    const info = await svc.ensure("issue", 42);
+    await assert.rejects(
+      svc.ensure("pr", 7, "issue-42"),
+      (e: Error) =>
+        e.message.includes("already checked out at") &&
+        e.message.includes(info.path) &&
+        e.message.includes("unrelated to PR #7") &&
+        e.message.includes("rename or remove its local branch")
+    );
+  });
+
   it("rejects an existing worktree registered on a different branch", async () => {
     const svc = makeService();
     const conflictingPath = path.join(

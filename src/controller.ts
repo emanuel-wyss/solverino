@@ -224,11 +224,11 @@ export class Controller {
     void this.persistAssociationDelta();
   }
 
-  private associatedWorktree(
+  private async associatedWorktree(
     kind: GitHubItem["kind"],
     number: number,
     expectedBranch: string | undefined
-  ): { branch: string; path: string } | undefined {
+  ): Promise<{ branch: string; path: string; managed: boolean } | undefined> {
     if (!expectedBranch) {
       return undefined;
     }
@@ -243,30 +243,39 @@ export class Controller {
       void this.persistAssociationDelta();
       return undefined;
     }
-    return { branch, path };
+    const folder = path.replace(/.*[\\/]/, "");
+    const parsed = parseWorktreeFolderName(folder);
+    const managed =
+      !!parsed &&
+      owningRepoName(folder) === (await this.worktrees.mainRepoName());
+    return { branch, path, managed };
   }
 
   private async findReusableWorktree(
     branch: string,
     expectedHeadSha: string | undefined
-  ): Promise<{ branch: string; path: string } | undefined> {
+  ): Promise<
+    { branch: string; path: string; managed: boolean } | undefined
+  > {
     if (!expectedHeadSha) {
       return undefined;
     }
     const repoName = await this.worktrees.mainRepoName();
-    for (const [wtPath, wtBranch] of this.worktreesByPath) {
+    const list = await this.worktrees.listStrict();
+    for (const { path: wtPath, branch: wtBranch } of list) {
       if (wtBranch !== branch) {
-        continue;
-      }
-      const folder = wtPath.replace(/.*[\\/]/, "");
-      const parsed = parseWorktreeFolderName(folder);
-      if (!parsed || owningRepoName(folder) !== repoName) {
         continue;
       }
       if ((await this.worktrees.headCommit(wtPath)) !== expectedHeadSha) {
         continue;
       }
-      return { branch: wtBranch, path: wtPath };
+      const folder = wtPath.replace(/.*[\\/]/, "");
+      const parsed = parseWorktreeFolderName(folder);
+      return {
+        branch: wtBranch,
+        path: wtPath,
+        managed: !!parsed && owningRepoName(folder) === repoName,
+      };
     }
     return undefined;
   }
@@ -854,14 +863,21 @@ export class Controller {
         }
       }
       const existingByBranch =
-        this.associatedWorktree(item.kind, item.number, expectedBranch) ??
+        (await this.associatedWorktree(
+          item.kind,
+          item.number,
+          expectedBranch
+        )) ??
         (prHeadBranch
           ? await this.findReusableWorktree(
               prHeadBranch,
               await this.github.getPRHeadSha(item.number)
             )
           : undefined);
-      if (existingByBranch && !this.itemWorktreeAssociations.has(`${item.kind}:${item.number}`)) {
+      if (
+        existingByBranch?.managed &&
+        !this.itemWorktreeAssociations.has(`${item.kind}:${item.number}`)
+      ) {
         this.setAssociation(`${item.kind}:${item.number}`, existingByBranch.path);
         void this.persistAssociationDelta();
       }
@@ -982,7 +998,7 @@ export class Controller {
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
-      const associated = this.associatedWorktree(
+      const associated = await this.associatedWorktree(
         item.kind,
         item.number,
         prHeadBranch ?? branchName(item.kind, item.number)
@@ -997,8 +1013,11 @@ export class Controller {
           await this.github.getPRHeadSha(item.number)
         );
         if (existing) {
-          this.setAssociation(`${item.kind}:${item.number}`, existing.path);
-          void this.persistAssociationDelta();
+          if (existing.managed) {
+            this.setAssociation(`${item.kind}:${item.number}`, existing.path);
+            void this.persistAssociationDelta();
+          }
+          this.worktreesByPath.set(existing.path, existing.branch);
           this.tree.refresh();
           this.openFolderWindow(existing.path);
           return;
@@ -1067,6 +1086,18 @@ export class Controller {
     if (!fresh) {
       void vscode.window.showInformationMessage(
         `Solverino: no worktree exists for ${item.kind} #${item.number}.`
+      );
+      return;
+    }
+    const cleanupFolder = wtPath.replace(/.*[\\/]/, "");
+    const cleanupParsed = parseWorktreeFolderName(cleanupFolder);
+    if (
+      !cleanupParsed ||
+      owningRepoName(cleanupFolder) !==
+        (await this.worktrees.mainRepoName())
+    ) {
+      void vscode.window.showErrorMessage(
+        `Solverino: refusing to remove ${wtPath} because it is not a Solverino-managed worktree.`
       );
       return;
     }
