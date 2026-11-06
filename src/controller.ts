@@ -992,8 +992,13 @@ export class Controller {
     if (item.kind === "pr") {
       try {
         expectedBranch = await this.github.getPRHeadRef(item.number);
-      } catch {
-        expectedBranch = undefined;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(message);
+        void vscode.window.showErrorMessage(
+          `Solverino: could not determine the head branch of PR #${item.number}; cleanup aborted. ${message}`
+        );
+        return;
       }
     } else {
       expectedBranch = branchName(item.kind, item.number);
