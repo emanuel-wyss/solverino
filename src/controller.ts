@@ -268,7 +268,16 @@ export class Controller {
   }
 
   private async scanWorktrees(): Promise<void> {
-    const list = await this.worktrees.list();
+    let list: { branch: string; path: string }[];
+    try {
+      list = await this.worktrees.listStrict();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Worktree enumeration failed; keeping the known worktrees and associations. ${message}`
+      );
+      return;
+    }
     this.worktreesByPath = new Map(list.map((w) => [w.path, w.branch]));
     for (const [key, associated] of [...this.itemWorktreeAssociations]) {
       if (!this.worktreesByPath.has(associated)) {
@@ -979,9 +988,28 @@ export class Controller {
 
   private async cleanupWorktree(item: GitHubItem): Promise<void> {
     const key = `${item.kind}:${item.number}`;
-    const wtPath =
+    let expectedBranch: string | undefined;
+    if (item.kind === "pr") {
+      try {
+        expectedBranch = await this.github.getPRHeadRef(item.number);
+      } catch {
+        expectedBranch = undefined;
+      }
+    } else {
+      expectedBranch = branchName(item.kind, item.number);
+    }
+    let wtPath =
       this.itemWorktreeAssociations.get(key) ??
       this.worktrees.expectedPath(item.kind, item.number);
+    const associatedBranch = this.worktreesByPath.get(wtPath);
+    if (
+      this.itemWorktreeAssociations.has(key) &&
+      (!associatedBranch || associatedBranch !== expectedBranch)
+    ) {
+      this.deleteAssociation(key);
+      void this.persistAssociationDelta();
+      wtPath = this.worktrees.expectedPath(item.kind, item.number);
+    }
     const branch = this.worktreesByPath.get(wtPath);
     if (!branch) {
       void vscode.window.showInformationMessage(
