@@ -27,6 +27,8 @@ export class Controller {
   private worktreesByPath = new Map<string, string>();
   private dirtyFilesByPath = new Map<string, number>();
   private itemWorktreeAssociations = new Map<string, string>();
+  private associationDelta = new Map<string, string | null>();
+  private associationKey: string | undefined;
   private statusBarItem: vscode.StatusBarItem | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
   private repoPath: string;
@@ -34,12 +36,6 @@ export class Controller {
     "solverino.openCopilotAgentOnStart";
   private static readonly WT_ASSOC_KEY_PREFIX =
     "solverino.worktreeAssociations";
-
-  private static worktreeAssociationsKey(
-    repoPath: string
-  ): string {
-    return `${Controller.WT_ASSOC_KEY_PREFIX}.${repoPath}`;
-  }
   private static readonly OPEN_AGENT_FLAG_TTL_MS = 5 * 60 * 1000;
   private static readonly URI_HANDLER_PATH = "/open-agent";
   private static readonly URI_HANDLER_BASE =
@@ -54,13 +50,6 @@ export class Controller {
       error: (m) => this.outputChannel.appendLine(`[error] ${m}`),
     };
     this.repoPath = Controller.requireRepoPath();
-    this.itemWorktreeAssociations = new Map(
-      Object.entries(
-        this.context.globalState.get<Record<string, string>>(
-          Controller.worktreeAssociationsKey(this.repoPath)
-        ) ?? {}
-      )
-    );
     this.github = new GitHubService(this.repoPath, this.logger);
     this.worktreeParentFolder = this.config<string>("worktreeParentFolder", "");
     this.worktrees = this.buildWorktreeService();
@@ -176,24 +165,74 @@ export class Controller {
     };
   }
 
-  private saveWorktreeAssociations(): void {
-    void this.context.globalState.update(
-      Controller.worktreeAssociationsKey(this.repoPath),
-      Object.fromEntries(this.itemWorktreeAssociations)
-    );
+  private async associationStorageKey(): Promise<string> {
+    if (!this.associationKey) {
+      this.associationKey = `${Controller.WT_ASSOC_KEY_PREFIX}.${await this.worktrees.gitCommonDir()}`;
+    }
+    return this.associationKey;
+  }
+
+  private async loadWorktreeAssociations(): Promise<void> {
+    const stored =
+      this.context.globalState.get<Record<string, string>>(
+        await this.associationStorageKey()
+      ) ?? {};
+    this.itemWorktreeAssociations = new Map(Object.entries(stored));
+  }
+
+  private async persistAssociationDelta(): Promise<void> {
+    if (this.associationDelta.size === 0) {
+      return;
+    }
+    const key = await this.associationStorageKey();
+    const stored =
+      this.context.globalState.get<Record<string, string>>(key) ?? {};
+    for (const [itemKey, value] of this.associationDelta) {
+      if (value === null) {
+        delete stored[itemKey];
+      } else {
+        stored[itemKey] = value;
+      }
+    }
+    await this.context.globalState.update(key, stored);
+    this.associationDelta.clear();
+  }
+
+  private setAssociation(key: string, path: string): void {
+    this.itemWorktreeAssociations.set(key, path);
+    this.associationDelta.set(key, path);
+  }
+
+  private deleteAssociation(key: string): void {
+    if (!this.itemWorktreeAssociations.has(key)) {
+      return;
+    }
+    this.itemWorktreeAssociations.delete(key);
+    this.associationDelta.set(key, null);
   }
 
   private removeAssociationsForPath(path: string): void {
-    let changed = false;
     for (const [key, associated] of [...this.itemWorktreeAssociations]) {
       if (associated === path) {
-        this.itemWorktreeAssociations.delete(key);
-        changed = true;
+        this.deleteAssociation(key);
       }
     }
-    if (changed) {
-      this.saveWorktreeAssociations();
+    void this.persistAssociationDelta();
+  }
+
+  private associatedWorktree(
+    kind: GitHubItem["kind"],
+    number: number
+  ): { branch: string; path: string } | undefined {
+    const path = this.itemWorktreeAssociations.get(`${kind}:${number}`);
+    if (!path) {
+      return undefined;
     }
+    const branch = this.worktreesByPath.get(path);
+    if (!branch) {
+      return undefined;
+    }
+    return { branch, path };
   }
 
   private async findReusableWorktree(
@@ -226,12 +265,10 @@ export class Controller {
     this.worktreesByPath = new Map(list.map((w) => [w.path, w.branch]));
     for (const [key, associated] of [...this.itemWorktreeAssociations]) {
       if (!this.worktreesByPath.has(associated)) {
-        this.itemWorktreeAssociations.delete(key);
+        this.deleteAssociation(key);
       }
     }
-    if (this.itemWorktreeAssociations.size > 0) {
-      this.saveWorktreeAssociations();
-    }
+    void this.persistAssociationDelta();
     const overviewPaths = new Set(
       this.tree.allItems().map((item) => {
         const key = `${item.kind}:${item.number}`;
@@ -273,6 +310,7 @@ export class Controller {
   }
 
   async refresh(): Promise<void> {
+    await this.loadWorktreeAssociations();
     this.tree.setLoading(true);
     try {
       const assignedOnly = !this.config<boolean>("showAllOpenIssues", false);
@@ -460,8 +498,8 @@ export class Controller {
       );
       const prNumber = /\/pull\/(\d+)/.exec(prUrl)?.[1];
       if (prNumber) {
-        this.itemWorktreeAssociations.set(`pr:${prNumber}`, info.wt.path);
-        this.saveWorktreeAssociations();
+        this.setAssociation(`pr:${prNumber}`, info.wt.path);
+        void this.persistAssociationDelta();
         this.tree.refresh();
       }
       await vscode.env.openExternal(vscode.Uri.parse(prUrl));
@@ -763,18 +801,17 @@ export class Controller {
           return;
         }
       }
-      const existingByBranch = prHeadBranch
-        ? await this.findReusableWorktree(
-            prHeadBranch,
-            await this.github.getPRHeadSha(item.number)
-          )
-        : undefined;
-      if (existingByBranch) {
-        this.itemWorktreeAssociations.set(
-          `${item.kind}:${item.number}`,
-          existingByBranch.path
-        );
-        this.saveWorktreeAssociations();
+      const existingByBranch =
+        this.associatedWorktree(item.kind, item.number) ??
+        (prHeadBranch
+          ? await this.findReusableWorktree(
+              prHeadBranch,
+              await this.github.getPRHeadSha(item.number)
+            )
+          : undefined);
+      if (existingByBranch && !this.itemWorktreeAssociations.has(`${item.kind}:${item.number}`)) {
+        this.setAssociation(`${item.kind}:${item.number}`, existingByBranch.path);
+        void this.persistAssociationDelta();
       }
       const info = existingByBranch
         ? { branch: existingByBranch.branch, path: existingByBranch.path }
@@ -893,17 +930,19 @@ export class Controller {
       if (item.kind === "pr") {
         prHeadBranch = await this.github.getPRHeadRef(item.number);
       }
+      const associated = this.associatedWorktree(item.kind, item.number);
+      if (associated) {
+        this.openFolderWindow(associated.path);
+        return;
+      }
       if (prHeadBranch) {
         const existing = await this.findReusableWorktree(
           prHeadBranch,
           await this.github.getPRHeadSha(item.number)
         );
         if (existing) {
-          this.itemWorktreeAssociations.set(
-            `${item.kind}:${item.number}`,
-            existing.path
-          );
-          this.saveWorktreeAssociations();
+          this.setAssociation(`${item.kind}:${item.number}`, existing.path);
+          void this.persistAssociationDelta();
           this.tree.refresh();
           this.openFolderWindow(existing.path);
           return;
@@ -988,7 +1027,6 @@ export class Controller {
     try {
       await this.worktrees.removeEntry(wtPath, branch);
       this.worktreesByPath.delete(wtPath);
-      this.itemWorktreeAssociations.delete(key);
       this.removeAssociationsForPath(wtPath);
       this.tree.refresh();
     } catch (e) {

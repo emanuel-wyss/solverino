@@ -168,14 +168,17 @@ export class WorktreeService {
     });
   }
 
-  async mainRepoName(): Promise<string> {
+  async gitCommonDir(): Promise<string> {
     const result = await runOk(
       "git",
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
       { cwd: this.repoPath, logger: this.logger }
     );
-    const commonDir = result.stdout.trim();
-    const mainRepo = commonDir.replace(/[\\/]\.git$/, "");
+    return result.stdout.trim();
+  }
+
+  async mainRepoName(): Promise<string> {
+    const mainRepo = (await this.gitCommonDir()).replace(/[\\/]\.git$/, "");
     const name = path.basename(mainRepo).replace(/\.git$/, "");
     return name || "repo";
   }
