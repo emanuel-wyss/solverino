@@ -539,6 +539,31 @@ export class Controller {
     if (!orphan?.path || !orphan?.branch) {
       return;
     }
+    let freshOrphan: { branch: string; path: string } | undefined;
+    try {
+      freshOrphan = (await this.worktrees.listStrict()).find(
+        (w) => w.path === orphan.path
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(
+        `Solverino: could not enumerate the worktrees; cleanup aborted. ${message}`
+      );
+      return;
+    }
+    if (!freshOrphan) {
+      void vscode.window.showInformationMessage(
+        `Solverino: the orphaned worktree on branch "${orphan.branch}" no longer exists.`
+      );
+      this.removeAssociationsForPath(orphan.path);
+      this.tree.setOrphans(
+        this.tree.currentOrphans().filter((o) => o.path !== orphan.path)
+      );
+      this.tree.refresh();
+      return;
+    }
+    const orphanBranch = freshOrphan.branch;
     const warnings: string[] = [];
     try {
       const status = await this.worktrees.statusFiles(orphan.path);
@@ -547,25 +572,25 @@ export class Controller {
           `${status.files.length} uncommitted file(s) will be permanently lost`
         );
       }
-      const unpushed = await this.worktrees.unpushedCommitCount(
+      const unpushed = await this.worktrees.unpushedCommitCountStrict(
         orphan.path,
-        orphan.branch
+        orphanBranch
       );
       if (unpushed > 0) {
         warnings.push(
-          `${unpushed} commit(s) on ${orphan.branch} exist only locally and will be deleted`
+          `${unpushed} commit(s) on ${orphanBranch} exist only locally and will be deleted`
         );
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(message);
       void vscode.window.showErrorMessage(
-        `Solverino: could not verify the worktree status on branch "${orphan.branch}"; cleanup aborted. ${message}`
+        `Solverino: could not verify the worktree status on branch "${orphanBranch}"; cleanup aborted. ${message}`
       );
       return;
     }
     const confirm = await vscode.window.showWarningMessage(
-      `Remove the orphaned worktree on branch "${orphan.branch}"?`,
+      `Remove the orphaned worktree on branch "${orphanBranch}"?`,
       {
         modal: true,
         detail:
@@ -579,7 +604,7 @@ export class Controller {
       return;
     }
     try {
-      await this.worktrees.removeEntry(orphan.path, orphan.branch);
+      await this.worktrees.removeEntry(orphan.path, orphanBranch);
       this.worktreesByPath.delete(orphan.path);
       this.removeAssociationsForPath(orphan.path);
       this.tree.setOrphans(
@@ -1019,13 +1044,32 @@ export class Controller {
       void this.persistAssociationDelta();
       wtPath = this.worktrees.expectedPath(item.kind, item.number);
     }
-    const branch = this.worktreesByPath.get(wtPath);
-    if (!branch) {
+    let fresh: { branch: string; path: string } | undefined;
+    try {
+      fresh = (await this.worktrees.listStrict()).find(
+        (w) => w.path === wtPath
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(message);
+      void vscode.window.showErrorMessage(
+        `Solverino: could not enumerate the worktrees; cleanup aborted. ${message}`
+      );
+      return;
+    }
+    if (!fresh) {
       void vscode.window.showInformationMessage(
         `Solverino: no worktree exists for ${item.kind} #${item.number}.`
       );
       return;
     }
+    if (expectedBranch && fresh.branch !== expectedBranch) {
+      void vscode.window.showErrorMessage(
+        `Solverino: the worktree for ${item.kind} #${item.number} is on branch "${fresh.branch}", expected "${expectedBranch}"; cleanup aborted.`
+      );
+      return;
+    }
+    const branch = fresh.branch;
     const warnings: string[] = [];
     try {
       const status = await this.worktrees.statusFiles(wtPath);
@@ -1034,7 +1078,7 @@ export class Controller {
           `${status.files.length} uncommitted file(s) will be permanently lost`
         );
       }
-      const unpushed = await this.worktrees.unpushedCommitCount(
+      const unpushed = await this.worktrees.unpushedCommitCountStrict(
         wtPath,
         branch
       );

@@ -88,11 +88,11 @@ export class WorktreeService {
         );
       } else {
         if (kind === "pr") {
-          const unpushed = await this.unpushedCommitCount(
+          const unpushed = await this.unpushedCommitCountStrict(
             this.repoPath,
             branch,
             startPoint
-          ).catch(() => 0);
+          );
           if (unpushed > 0) {
             throw new Error(
               `Branch "${branch}" has ${unpushed} commit(s) that are not on any remote or the PR head; refusing to reset it. Push the commits or clean up the worktree first.`
@@ -290,7 +290,7 @@ export class WorktreeService {
     return true;
   }
 
-  async unpushedCommitCount(
+  async unpushedCommitCountStrict(
     wtPath: string,
     branch: string,
     excludeRef?: string
@@ -306,12 +306,19 @@ export class WorktreeService {
         ...(excludeRef ? [excludeRef] : []),
       ],
       { cwd: wtPath, logger: this.logger }
-    ).catch(() => undefined);
-    if (!result) {
-      return 0;
-    }
+    );
     const count = parseInt(result.stdout.trim(), 10);
     return Number.isFinite(count) && count > 0 ? count : 0;
+  }
+
+  async unpushedCommitCount(
+    wtPath: string,
+    branch: string,
+    excludeRef?: string
+  ): Promise<number> {
+    return this.unpushedCommitCountStrict(wtPath, branch, excludeRef).catch(
+      () => 0
+    );
   }
 
   private async resolveStartPoint(
